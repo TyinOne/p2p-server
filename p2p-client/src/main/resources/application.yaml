@@ -15,34 +15,3 @@ logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
     file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
-
-# 客户端配置（所有客户端统一格式）
-p2p:
-  client:
-    auth: "my-secret-key-123"
-    server-host: "43.136.175.152"
-    port: 8084
-    client-id: "client-mobile"  # 留空则自动生成
-
-    # P2P 通道配置
-    p2p:
-      udp-port: 0  # 0=系统分配
-      hole-punch-timeout-ms: 10000
-      hole-punch-interval-ms: 500
-      heartbeat-interval-ms: 15000
-      session-timeout-ms: 60000
-
-    # 暴露的隧道（本机服务，供对端连接）
-    tunnels: []
-    #  示例:
-    #  - remote-port: 3390
-    #    local-port: 3389
-    #    local-address: 127.0.0.1
-    #    description: "RDP"
-
-    # 要连接的对端隧道
-    connect:
-      - peer-id: "client-localzero"
-        remote-port: 3390
-        local-bind-port: 13390
-        description: "连接 client-b 的 RDP"

@@ -46,9 +46,17 @@ public class P2pSignalingHandler {
     public void handleBinding(ChannelHandlerContext ctx, TunnelMessage msg) {
         String clientId = msg.getClientId();
         InetSocketAddress addr = (InetSocketAddress) ctx.channel().remoteAddress();
-        String publicAddr = addr.getHostString() + ":" + addr.getPort();
 
-        registry.updatePublicAddress(clientId, publicAddr);
+        // 优先使用客户端上报的 UDP 端口，回退到 TCP 源端口
+        int port = (msg.getUdpPort() != null && msg.getUdpPort() > 0)
+                ? msg.getUdpPort() : addr.getPort();
+        String publicAddr = addr.getHostString() + ":" + port;
+        String localAddr = msg.getLocalAddr();
+        if (localAddr != null && port > 0) {
+            localAddr = localAddr + ":" + port;
+        }
+
+        registry.updatePublicAddress(clientId, publicAddr, localAddr);
 
         TunnelMessage response = new TunnelMessage();
         response.setType(TunnelMessage.MessageType.P2P_BINDING_RESPONSE);
@@ -56,7 +64,8 @@ public class P2pSignalingHandler {
         response.setCandidateAddr(publicAddr);
         ctx.writeAndFlush(response);
 
-        log.info("P2P binding for {}: {}", clientId, publicAddr);
+        log.info("P2P binding for {}: public={}, local={}, udpPort={}",
+                clientId, publicAddr, localAddr, msg.getUdpPort());
     }
 
     /**
@@ -92,7 +101,7 @@ public class P2pSignalingHandler {
             return;
         }
 
-        // 向双方发送对方的候选地址
+        // 向双方发送对方的公网候选地址
         sendCandidate(ctx.channel(), requesterId, peerId, peerAddr);
         sendCandidate(peerChannel, peerId, requesterId, requesterAddr);
 

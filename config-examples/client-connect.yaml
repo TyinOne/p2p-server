@@ -10,7 +10,7 @@ p2p:
     client-id: "my-laptop"
 
     p2p:
-      udp-port: 0
+      udp-port: 5001  # 固定 UDP 端口，防火墙需放行，两端不要相同
 
     tunnels: []
 

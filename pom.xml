@@ -109,58 +109,6 @@
             </plugins>
         </pluginManagement>
         <plugins>
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-antrun-plugin</artifactId>
-                <version>3.1.0</version>
-                <inherited>false</inherited>
-                <executions>
-                    <execution>
-                        <id>assemble-build</id>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>run</goal>
-                        </goals>
-                        <configuration>
-                            <target>
-                                <!-- 清理并创建 build 目录 -->
-                                <delete dir="${project.basedir}/build" />
-                                <mkdir dir="${project.basedir}/build/config" />
-
-                                <!-- 复制 jar 文件 -->
-                                <copy file="${project.basedir}/p2p-server/target/p2p-server-${project.version}.jar"
-                                      todir="${project.basedir}/build" />
-                                <copy file="${project.basedir}/p2p-client/target/p2p-client-${project.version}.jar"
-                                      todir="${project.basedir}/build" />
-
-                                <!-- 复制脚本文件 -->
-                                <copy file="${project.basedir}/p2p-server/p2p-server.sh"
-                                      todir="${project.basedir}/build" />
-                                <copy file="${project.basedir}/p2p-server/p2p-server.bat"
-                                      todir="${project.basedir}/build" />
-                                <copy file="${project.basedir}/p2p-server/p2p-server.ps1"
-                                      todir="${project.basedir}/build" />
-                                <copy file="${project.basedir}/p2p-client/p2p-client.sh"
-                                      todir="${project.basedir}/build" />
-                                <copy file="${project.basedir}/p2p-client/p2p-client.bat"
-                                      todir="${project.basedir}/build" />
-                                <copy file="${project.basedir}/p2p-client/p2p-client.ps1"
-                                      todir="${project.basedir}/build" />
-
-                                <!-- 复制配置示例为 .example 后缀 -->
-                                <copy file="${project.basedir}/config-examples/server.yaml"
-                                      tofile="${project.basedir}/build/config/server.yaml.example" />
-                                <copy file="${project.basedir}/config-examples/client-expose.yaml"
-                                      tofile="${project.basedir}/build/config/client-expose.yaml.example" />
-                                <copy file="${project.basedir}/config-examples/client-connect.yaml"
-                                      tofile="${project.basedir}/build/config/client-connect.yaml.example" />
-                                <copy file="${project.basedir}/config-examples/client-full.yaml"
-                                      tofile="${project.basedir}/build/config/client-full.yaml.example" />
-                            </target>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
     </build>
 

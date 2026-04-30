@@ -33,6 +33,7 @@ public class P2pRegistry {
             String clientId,
             Channel channel,
             String publicAddress,
+            String localAddress,
             List<TunnelExposeConfig> tunnels
     ) {}
 
@@ -43,7 +44,7 @@ public class P2pRegistry {
         InetSocketAddress addr = (InetSocketAddress) channel.remoteAddress();
         String publicAddr = addr.getHostString() + ":" + addr.getPort();
 
-        ClientInfo info = new ClientInfo(clientId, channel, publicAddr, tunnels);
+        ClientInfo info = new ClientInfo(clientId, channel, publicAddr, null, tunnels);
         clientRegistry.put(clientId, info);
 
         if (tunnels != null) {
@@ -72,14 +73,14 @@ public class P2pRegistry {
     }
 
     /**
-     * 更新客户端公网地址
+     * 更新客户端公网地址和局域网地址
      */
-    public void updatePublicAddress(String clientId, String publicAddress) {
+    public void updatePublicAddress(String clientId, String publicAddress, String localAddress) {
         ClientInfo old = clientRegistry.get(clientId);
         if (old != null) {
             clientRegistry.put(clientId, new ClientInfo(
-                    clientId, old.channel(), publicAddress, old.tunnels()));
-            log.info("Updated public address for {}: {}", clientId, publicAddress);
+                    clientId, old.channel(), publicAddress, localAddress, old.tunnels()));
+            log.info("Updated public address for {}: {} (local: {})", clientId, publicAddress, localAddress);
         }
     }
 

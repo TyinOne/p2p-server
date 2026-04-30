@@ -56,6 +56,11 @@ public class ClientConfig {
         private int udpPort = 0;
 
         /**
+         * 是否启用 UPnP 自动端口映射
+         */
+        private boolean upnpEnabled = true;
+
+        /**
          * P2P 打洞超时（毫秒）
          */
         private long holePunchTimeoutMs = 10000;

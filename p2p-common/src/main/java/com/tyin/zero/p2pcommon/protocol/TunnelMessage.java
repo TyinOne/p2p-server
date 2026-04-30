@@ -59,6 +59,16 @@ public class TunnelMessage {
     private String localAddress;
 
     /**
+     * P2P UDP 端口（客户端 binding 时上报）
+     */
+    private Integer udpPort;
+
+    /**
+     * 客户端局域网 IP（binding 时上报，用于同 NAT 直连）
+     */
+    private String localAddr;
+
+    /**
      * 暴露的隧道列表（JSON 序列化，注册时携带）
      */
     private String tunnelsJson;

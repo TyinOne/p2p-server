@@ -11,7 +11,7 @@ p2p:
 
     # P2P 通道配置（可选，以下为默认值）
     p2p:
-      udp-port: 0                    # 本地 UDP 端口，0=系统分配
+      udp-port: 5000                 # 固定 UDP 端口，防火墙需放行
       hole-punch-timeout-ms: 10000   # 打洞超时（毫秒）
       hole-punch-interval-ms: 500    # 打洞发送间隔（毫秒）
       heartbeat-interval-ms: 15000   # UDP 心跳间隔（毫秒）

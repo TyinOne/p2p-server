@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.net.InetSocketAddress;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -34,6 +35,8 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
 
     private P2pUdpChannel udpChannel;
     private P2pHolePuncher holePuncher;
+    private UpnpPortMapper upnpPortMapper;
+    private int externalPort = -1;
     private ChannelHandlerContext serverCtx;
 
     /**
@@ -68,8 +71,27 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         int udpPort = clientConfig.getP2p().getUdpPort();
         udpChannel.bind(udpPort).addListener(f -> {
             if (f.isSuccess()) {
-                log.info("P2P UDP channel ready on port {}",
-                        udpChannel.getLocalAddress().getPort());
+                int localPort = udpChannel.getLocalAddress().getPort();
+                log.info("P2P UDP channel ready on port {}", localPort);
+
+                // UPnP 端口映射
+                if (clientConfig.getP2p().isUpnpEnabled()) {
+                    upnpPortMapper = new UpnpPortMapper();
+                    externalPort = upnpPortMapper.addMapping(localPort);
+                    if (externalPort > 0) {
+                        log.info("UPnP mapping active: external port {}", externalPort);
+                    } else {
+                        externalPort = localPort;
+                        log.info("UPnP mapping not available, using local port {}", localPort);
+                    }
+                } else {
+                    externalPort = localPort;
+                }
+
+                // 如果认证已完成，立即发送 binding 请求
+                if (serverCtx != null) {
+                    sendBindingRequest();
+                }
             }
         });
 
@@ -101,11 +123,28 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
     public void sendBindingRequest() {
         if (serverCtx == null) return;
 
+        // 等待 UDP 绑定和 UPnP 映射完成
+        if (externalPort < 0) {
+            log.warn("UDP channel not ready, delaying binding request");
+            return;
+        }
+
         TunnelMessage msg = new TunnelMessage();
         msg.setType(TunnelMessage.MessageType.P2P_BINDING);
         msg.setClientId(clientConfig.getClientId());
+        msg.setUdpPort(externalPort);
+        msg.setLocalAddr(getLocalIp());
         serverCtx.writeAndFlush(msg);
-        log.info("Sent P2P binding request");
+        log.info("Sent P2P binding request, UDP port: {}, local IP: {}",
+                externalPort, msg.getLocalAddr());
+    }
+
+    private String getLocalIp() {
+        try {
+            return java.net.InetAddress.getLocalHost().getHostAddress();
+        } catch (Exception e) {
+            return "127.0.0.1";
+        }
     }
 
     /**
@@ -116,8 +155,14 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         log.info("P2P binding response: public address = {}", publicAddr);
 
         // 为每个 connect 的对端发起 P2P 请求
-        if (clientConfig.getConnect() != null) {
-            for (ClientConfig.PeerTunnel peerTunnel : clientConfig.getConnect()) {
+        List<ClientConfig.PeerTunnel> connectList = clientConfig.getConnect();
+        log.info("Connect list: size={}, isNull={}, connect={}",
+                connectList == null ? "null" : connectList.size(),
+                connectList == null,
+                connectList);
+        if (connectList != null) {
+            for (ClientConfig.PeerTunnel peerTunnel : connectList) {
+                log.info("Sending P2P request to peer: {}", peerTunnel.getPeerId());
                 sendP2pRequest(peerTunnel.getPeerId(), peerTunnel.getRemotePort());
             }
         }
@@ -149,7 +194,8 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         String peerId = msg.getPeerId();
         String candidateAddr = msg.getCandidateAddr();
 
-        log.info("Received candidate for peer {}: {}", peerId, candidateAddr);
+        log.info("Received candidate: myId={}, msgClientId={}, peerId={}, addr={}",
+                clientConfig.getClientId(), msg.getClientId(), peerId, candidateAddr);
 
         P2pSession session = sessions.get(peerId);
         if (session == null) {
@@ -170,7 +216,8 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
      */
     public void handleHolePunch(TunnelMessage msg) {
         String peerId = msg.getPeerId();
-        log.info("Handle hole punch: myId={}, peerId={}, sessions={}", clientConfig.getClientId(), peerId, sessions.keySet());
+        log.info("Handle hole punch: myId={}, msgClientId={}, peerId={}, sessions={}",
+                clientConfig.getClientId(), msg.getClientId(), peerId, sessions.keySet());
 
         P2pSession session = sessions.get(peerId);
 
@@ -205,8 +252,9 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
                 () -> {
                     // 超时
                     session.setState(P2pSession.State.FAILED);
+                    log.warn("P2P hole punch timeout: myId={}, peerId={}, peerAddr={}",
+                            clientConfig.getClientId(), peerId, session.getPeerAddress());
                     sendP2pFailed(peerId);
-                    log.warn("P2P hole punch failed with {}", peerId);
                 }
         );
     }
@@ -261,6 +309,13 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
      */
     private void sendP2pFailed(String peerId) {
         if (serverCtx == null) return;
+
+        log.error(">>> sendP2pFailed: myId={}, peerId={}, sessions={}, sessionStates={}",
+                clientConfig.getClientId(), peerId, sessions.keySet(),
+                sessions.entrySet().stream()
+                        .collect(java.util.stream.Collectors.toMap(
+                                java.util.Map.Entry::getKey,
+                                e -> e.getValue().getState().name())));
 
         TunnelMessage msg = new TunnelMessage();
         msg.setType(TunnelMessage.MessageType.P2P_FAILED);
@@ -476,6 +531,7 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
     public void shutdown() {
         log.info("Shutting down P2P manager...");
         heartbeatScheduler.shutdownNow();
+        if (upnpPortMapper != null) upnpPortMapper.deleteMapping();
         if (holePuncher != null) holePuncher.shutdown();
         if (udpChannel != null) udpChannel.shutdown();
     }
