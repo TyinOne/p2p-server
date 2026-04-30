@@ -64,6 +64,11 @@ public class TunnelMessage {
     private Integer udpPort;
 
     /**
+     * P2P TCP 端口（客户端 binding 时上报，用于 TCP 打洞）
+     */
+    private Integer tcpPort;
+
+    /**
      * 客户端局域网 IP（binding 时上报，用于同 NAT 直连）
      */
     private String localAddr;
@@ -72,6 +77,11 @@ public class TunnelMessage {
      * 暴露的隧道列表（JSON 序列化，注册时携带）
      */
     private String tunnelsJson;
+
+    /**
+     * 隧道会话 ID（中继数据时使用）
+     */
+    private Integer sessionId;
 
     /**
      * 消息类型枚举
@@ -96,6 +106,12 @@ public class TunnelMessage {
         P2P_CANDIDATE,
         P2P_HOLE_PUNCH,
         P2P_SUCCESS,
-        P2P_FAILED
+        P2P_FAILED,
+        // TCP 打洞
+        TCP_PUNCH,
+        TCP_PUNCH_START,
+        // 服务端中继
+        RELAY_READY,
+        RELAY_DATA
     }
 }

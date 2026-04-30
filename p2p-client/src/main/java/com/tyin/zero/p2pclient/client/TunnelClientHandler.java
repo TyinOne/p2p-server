@@ -68,8 +68,12 @@ public class TunnelClientHandler extends SimpleChannelInboundHandler<TunnelMessa
             case P2P_BINDING_RESPONSE -> p2pManager.handleBindingResponse(msg);
             case P2P_CANDIDATE -> p2pManager.handleCandidate(msg);
             case P2P_HOLE_PUNCH -> p2pManager.handleHolePunch(msg);
+            case TCP_PUNCH_START -> p2pManager.handleTcpPunchStart(msg);
             case P2P_FAILED -> log.warn("P2P failed: {}", msg.getPayload() != null
                     ? new String(msg.getPayload(), java.nio.charset.StandardCharsets.UTF_8) : "unknown");
+            // 中继
+            case RELAY_READY -> p2pManager.handleRelayReady(msg);
+            case RELAY_DATA -> p2pManager.handleRelayData(msg);
             default -> log.debug("Ignored message type: {}", msg.getType());
         }
     }

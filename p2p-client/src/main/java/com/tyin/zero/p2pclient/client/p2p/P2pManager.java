@@ -5,11 +5,15 @@ import com.tyin.zero.p2pcommon.p2p.P2pSession;
 import com.tyin.zero.p2pcommon.p2p.P2pUdpCodec;
 import com.tyin.zero.p2pcommon.protocol.TunnelMessage;
 import io.netty.bootstrap.Bootstrap;
+import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.*;
 import io.netty.channel.nio.NioIoHandler;
 import io.netty.channel.socket.SocketChannel;
+import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
+import io.netty.handler.codec.LengthFieldPrepender;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -39,15 +43,33 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
     private int externalPort = -1;
     private ChannelHandlerContext serverCtx;
 
+    // TCP 打洞
+    private int tcpListenPort = -1;
+    private EventLoopGroup tcpGroup;
+    private Channel tcpServerChannel;
+    private final Map<String, Channel> tcpPeerChannels = new ConcurrentHashMap<>();
+    // TCP 打洞预期对端地址：InetSocketAddress → peerId
+    private final Map<String, String> tcpPendingPeers = new ConcurrentHashMap<>();
+
     /**
      * P2P 会话：peerId → P2pSession
      */
     private final Map<String, P2pSession> sessions = new ConcurrentHashMap<>();
 
     /**
+     * 中继模式的对端集合
+     */
+    private final java.util.Set<String> relayPeers = ConcurrentHashMap.newKeySet();
+
+    /**
      * 隧道会话：sessionId → 隧道处理器
      */
     private final Map<Integer, P2pTunnelHandler> tunnelHandlers = new ConcurrentHashMap<>();
+
+    /**
+     * 会话归属：sessionId → peerId
+     */
+    private final Map<Integer, String> sessionPeerMap = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService heartbeatScheduler =
             Executors.newSingleThreadScheduledExecutor(
@@ -87,6 +109,9 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
                 } else {
                     externalPort = localPort;
                 }
+
+                // 绑定 TCP 监听（用于 TCP 打洞）
+                bindTcpServer();
 
                 // 如果认证已完成，立即发送 binding 请求
                 if (serverCtx != null) {
@@ -134,9 +159,12 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         msg.setClientId(clientConfig.getClientId());
         msg.setUdpPort(externalPort);
         msg.setLocalAddr(getLocalIp());
+        if (tcpListenPort > 0) {
+            msg.setTcpPort(tcpListenPort);
+        }
         serverCtx.writeAndFlush(msg);
-        log.info("Sent P2P binding request, UDP port: {}, local IP: {}",
-                externalPort, msg.getLocalAddr());
+        log.info("Sent P2P binding request, UDP port: {}, TCP port: {}, local IP: {}",
+                externalPort, tcpListenPort, msg.getLocalAddr());
     }
 
     private String getLocalIp() {
@@ -145,6 +173,36 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         } catch (Exception e) {
             return "127.0.0.1";
         }
+    }
+
+    /**
+     * 绑定 TCP 监听端口（用于 TCP 打洞）
+     */
+    private void bindTcpServer() {
+        tcpGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+        ServerBootstrap bootstrap = new ServerBootstrap();
+        bootstrap.group(tcpGroup)
+                .channel(NioServerSocketChannel.class)
+                .childHandler(new ChannelInitializer<SocketChannel>() {
+                    @Override
+                    protected void initChannel(SocketChannel ch) {
+                        ch.pipeline().addLast(
+                                new LengthFieldBasedFrameDecoder(65535, 0, 4, 0, 4),
+                                new LengthFieldPrepender(4),
+                                new TcpPunchServerHandler()
+                        );
+                    }
+                });
+
+        bootstrap.bind(0).addListener((ChannelFutureListener) f -> {
+            if (f.isSuccess()) {
+                tcpServerChannel = f.channel();
+                tcpListenPort = ((InetSocketAddress) tcpServerChannel.localAddress()).getPort();
+                log.info("P2P TCP listener bound to port {}", tcpListenPort);
+            } else {
+                log.error("Failed to bind P2P TCP listener", f.cause());
+            }
+        });
     }
 
     /**
@@ -260,6 +318,236 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
     }
 
     /**
+     * 处理 TCP 打洞开始指令
+     * 收到后同时向对端的 TCP 端口发起连接
+     */
+    public void handleTcpPunchStart(TunnelMessage msg) {
+        String peerId = msg.getPeerId();
+        String peerTcpAddr = msg.getCandidateAddr();
+
+        if (peerTcpAddr == null) {
+            log.warn("TCP_PUNCH_START without peer TCP address for {}", peerId);
+            return;
+        }
+
+        String[] parts = peerTcpAddr.split(":");
+        if (parts.length != 2) {
+            log.warn("Invalid peer TCP address: {}", peerTcpAddr);
+            return;
+        }
+
+        String host = parts[0];
+        int port = Integer.parseInt(parts[1]);
+
+        log.info("TCP punch start: myId={}, peerId={}, peerTcpAddr={}",
+                clientConfig.getClientId(), peerId, peerTcpAddr);
+
+        // 存储预期的对端地址（用于匹配入站连接）
+        tcpPendingPeers.put(host + ":" + port, peerId);
+
+        // 同时发起 TCP 连接（双向打洞）
+        for (int i = 0; i < 3; i++) {
+            connectTcpPunch(peerId, host, port);
+        }
+    }
+
+    /**
+     * 向对端 TCP 端口发起打洞连接
+     */
+    private void connectTcpPunch(String peerId, String host, int port) {
+        if (tcpGroup == null) {
+            tcpGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
+        }
+
+        Bootstrap bootstrap = new Bootstrap();
+        bootstrap.group(tcpGroup)
+                .channel(NioSocketChannel.class)
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000)
+                .handler(new ChannelInitializer<SocketChannel>() {
+                    @Override
+                    protected void initChannel(SocketChannel ch) {
+                        ch.pipeline().addLast(
+                                new LengthFieldBasedFrameDecoder(65535, 0, 4, 0, 4),
+                                new LengthFieldPrepender(4),
+                                new TcpPunchDataHandler()
+                        );
+                    }
+                });
+
+        bootstrap.connect(host, port).addListener((ChannelFutureListener) f -> {
+            if (f.isSuccess()) {
+                Channel ch = f.channel();
+                log.info("TCP punch connected to {}:{} for peer {}", host, port, peerId);
+
+                // 如果已有连接，关闭旧的
+                Channel old = tcpPeerChannels.put(peerId, ch);
+                if (old != null && old.isActive() && old != ch) {
+                    old.close();
+                }
+
+                // 如果会话还未建立，标记为已建立
+                P2pSession session = sessions.get(peerId);
+                if (session != null && session.getState() != P2pSession.State.ESTABLISHED) {
+                    session.setState(P2pSession.State.ESTABLISHED);
+                    session.updateSeen();
+                    sendP2pSuccess(peerId);
+                    onP2pEstablished(peerId, session);
+                    log.info("P2P channel established via TCP punch with {}", peerId);
+                }
+
+                // 添加关闭监听
+                ch.closeFuture().addListener((ChannelFutureListener) cf -> {
+                    tcpPeerChannels.remove(peerId, ch);
+                    log.info("TCP punch channel closed for peer {}", peerId);
+                });
+            } else {
+                log.debug("TCP punch connect failed to {}:{} for peer {}: {}",
+                        host, port, peerId,
+                        f.cause() != null ? f.cause().getMessage() : "unknown");
+            }
+        });
+    }
+
+    /**
+     * TCP 打洞数据处理器（客户端主动连接时使用）
+     */
+    private class TcpPunchDataHandler extends SimpleChannelInboundHandler<ByteBuf> {
+        private String peerId;
+
+        @Override
+        protected void channelRead0(ChannelHandlerContext ctx, ByteBuf msg) {
+            if (msg.readableBytes() < 5) return;
+
+            byte type = msg.readByte();
+            int sessionId = msg.readInt();
+            byte[] payload = new byte[msg.readableBytes()];
+            msg.readBytes(payload);
+
+            if (peerId == null) {
+                for (Map.Entry<String, Channel> entry : tcpPeerChannels.entrySet()) {
+                    if (entry.getValue() == ctx.channel()) {
+                        peerId = entry.getKey();
+                        break;
+                    }
+                }
+            }
+
+            if (type == P2pUdpCodec.TYPE_DATA && peerId != null) {
+                handleTcpData(peerId, sessionId, payload);
+            }
+        }
+
+        @Override
+        public void channelInactive(ChannelHandlerContext ctx) {
+            if (peerId != null) {
+                tcpPeerChannels.remove(peerId, ctx.channel());
+                log.info("TCP punch channel inactive for peer {}", peerId);
+            }
+        }
+
+        @Override
+        public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+            log.debug("TCP punch channel error: {}", cause.getMessage());
+            ctx.close();
+        }
+    }
+
+    /**
+     * TCP 打洞服务端处理器（接受入站连接时使用）
+     * 通过 remoteAddress 匹配预期的 peerId
+     */
+    private class TcpPunchServerHandler extends SimpleChannelInboundHandler<ByteBuf> {
+        private String peerId;
+
+        @Override
+        public void channelActive(ChannelHandlerContext ctx) throws Exception {
+            // 通过 remoteAddress 查找匹配的 peerId
+            InetSocketAddress remoteAddr = (InetSocketAddress) ctx.channel().remoteAddress();
+            String addrKey = remoteAddr.getHostString() + ":" + remoteAddr.getPort();
+
+            // 尝试精确匹配
+            peerId = tcpPendingPeers.remove(addrKey);
+
+            // 如果精确匹配失败，通过 IP 段匹配（NAT 可能改变端口）
+            if (peerId == null) {
+                for (Map.Entry<String, String> entry : tcpPendingPeers.entrySet()) {
+                    if (entry.getKey().startsWith(remoteAddr.getHostString() + ":")) {
+                        peerId = entry.getValue();
+                        tcpPendingPeers.remove(entry.getKey());
+                        break;
+                    }
+                }
+            }
+
+            if (peerId != null) {
+                Channel old = tcpPeerChannels.put(peerId, ctx.channel());
+                if (old != null && old.isActive() && old != ctx.channel()) {
+                    old.close();
+                }
+
+                log.info("TCP punch accepted connection from {} for peer {}", addrKey, peerId);
+
+                // 如果会话还未建立，标记为已建立
+                P2pSession session = sessions.get(peerId);
+                if (session != null && session.getState() != P2pSession.State.ESTABLISHED) {
+                    session.setState(P2pSession.State.ESTABLISHED);
+                    session.updateSeen();
+                    sendP2pSuccess(peerId);
+                    onP2pEstablished(peerId, session);
+                    log.info("P2P channel established via TCP punch (inbound) with {}", peerId);
+                }
+            } else {
+                log.warn("TCP punch accepted connection from {} but no matching peer found", addrKey);
+            }
+
+            super.channelActive(ctx);
+        }
+
+        @Override
+        protected void channelRead0(ChannelHandlerContext ctx, ByteBuf msg) {
+            if (msg.readableBytes() < 5) return;
+
+            byte type = msg.readByte();
+            int sessionId = msg.readInt();
+            byte[] payload = new byte[msg.readableBytes()];
+            msg.readBytes(payload);
+
+            if (type == P2pUdpCodec.TYPE_DATA && peerId != null) {
+                handleTcpData(peerId, sessionId, payload);
+            }
+        }
+
+        @Override
+        public void channelInactive(ChannelHandlerContext ctx) {
+            if (peerId != null) {
+                tcpPeerChannels.remove(peerId, ctx.channel());
+                log.info("TCP punch server channel inactive for peer {}", peerId);
+            }
+        }
+
+        @Override
+        public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+            log.debug("TCP punch server channel error: {}", cause.getMessage());
+            ctx.close();
+        }
+    }
+
+    /**
+     * 处理 TCP 打洞收到的数据
+     */
+    private void handleTcpData(String peerId, int sessionId, byte[] payload) {
+        P2pSession session = sessions.get(peerId);
+        if (session != null) session.updateSeen();
+
+        P2pTunnelHandler handler = tunnelHandlers.get(sessionId);
+        if (handler != null) {
+            handler.onData(payload);
+        } else if (!clientConfig.getTunnels().isEmpty()) {
+            connectToLocalService(sessionId, payload, peerId);
+        }
+    }
+
+    /**
      * P2P 通道建立后的回调
      */
     private void onP2pEstablished(String peerId, P2pSession session) {
@@ -332,24 +620,122 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
     }
 
     /**
-     * 检查是否有到对端的 P2P 通道
+     * 检查是否有到对端的 P2P 通道（UDP 或 TCP）
      */
     public boolean hasP2pChannel(String peerId) {
+        if (relayPeers.contains(peerId)) return true;
+        Channel tcpCh = tcpPeerChannels.get(peerId);
+        if (tcpCh != null && tcpCh.isActive()) return true;
         P2pSession session = sessions.get(peerId);
         return session != null && session.getState() == P2pSession.State.ESTABLISHED;
     }
 
     /**
-     * 通过 P2P 发送数据
+     * 通过 P2P 或中继发送数据
      */
     public void sendData(String peerId, int sessionId, byte[] payload) {
+        // 中继模式
+        if (relayPeers.contains(peerId)) {
+            sendRelayData(peerId, sessionId, payload);
+            return;
+        }
+
+        // TCP 打洞模式
+        Channel tcpChannel = tcpPeerChannels.get(peerId);
+        if (tcpChannel != null && tcpChannel.isActive()) {
+            if (log.isTraceEnabled()) {
+                log.trace("TCP punch data to {}: session={}, {} bytes", peerId, sessionId, payload.length);
+            }
+            ByteBuf buf = tcpChannel.alloc().buffer(5 + payload.length);
+            buf.writeByte(P2pUdpCodec.TYPE_DATA);
+            buf.writeInt(sessionId);
+            buf.writeBytes(payload);
+            tcpChannel.writeAndFlush(buf);
+            P2pSession session = sessions.get(peerId);
+            if (session != null) session.updateSeen();
+            return;
+        }
+
+        // UDP P2P 模式
         P2pSession session = sessions.get(peerId);
         if (session == null || session.getState() != P2pSession.State.ESTABLISHED) {
             log.warn("No P2P channel to {}, cannot send data", peerId);
             return;
         }
+        if (log.isTraceEnabled()) {
+            log.trace("P2P data to {}: session={}, {} bytes", peerId, sessionId, payload.length);
+        }
         udpChannel.sendData(session.getPeerAddress(), sessionId, payload);
         session.updateSeen();
+    }
+
+    /**
+     * 处理 RELAY_READY（服务端通知进入中继模式）
+     */
+    public void handleRelayReady(TunnelMessage msg) {
+        String peerId = msg.getPeerId();
+        log.info("Relay mode ready for peer {}", peerId);
+
+        relayPeers.add(peerId);
+
+        // 创建会话（如果不存在）
+        P2pSession session = sessions.get(peerId);
+        if (session == null) {
+            session = new P2pSession(peerId);
+            sessions.put(peerId, session);
+        }
+        session.setState(P2pSession.State.ESTABLISHED);
+
+        // 启动本地 TCP 监听
+        onP2pEstablished(peerId, session);
+    }
+
+    /**
+     * 处理 RELAY_DATA（服务端转发的数据）
+     */
+    public void handleRelayData(TunnelMessage msg) {
+        String peerId = msg.getPeerId();
+        Integer sessionId = msg.getSessionId();
+        byte[] payload = msg.getPayload();
+
+        if (sessionId == null || payload == null) return;
+
+        // 更新会话状态
+        P2pSession session = sessions.get(peerId);
+        if (session != null) {
+            session.updateSeen();
+        }
+
+        // 分发到隧道处理器
+        P2pTunnelHandler handler = tunnelHandlers.get(sessionId);
+        if (handler != null) {
+            handler.onData(payload);
+        } else if (!clientConfig.getTunnels().isEmpty()) {
+            // tunnels 端：收到新 sessionId，连接本地服务
+            connectToLocalService(sessionId, payload, peerId);
+        }
+    }
+
+    /**
+     * 通过服务端中继发送数据
+     */
+    private void sendRelayData(String peerId, int sessionId, byte[] payload) {
+        if (serverCtx == null || !serverCtx.channel().isActive()) {
+            log.warn("Server connection lost, cannot relay data to {}", peerId);
+            return;
+        }
+
+        if (log.isTraceEnabled()) {
+            log.trace("Relay data to {}: session={}, {} bytes", peerId, sessionId, payload.length);
+        }
+
+        TunnelMessage msg = new TunnelMessage();
+        msg.setType(TunnelMessage.MessageType.RELAY_DATA);
+        msg.setClientId(clientConfig.getClientId());
+        msg.setPeerId(peerId);
+        msg.setSessionId(sessionId);
+        msg.setPayload(payload);
+        serverCtx.writeAndFlush(msg);
     }
 
     /**
@@ -386,17 +772,31 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
             handler.onData(payload);
         } else if (!clientConfig.getTunnels().isEmpty()) {
             // tunnels 端：收到新 sessionId，连接本地服务
-            connectToLocalService(sessionId, payload);
+            // 查找对端 peerId
+            String peerId = findPeerIdByAddress(sender);
+            connectToLocalService(sessionId, payload, peerId);
         } else {
             log.debug("No handler for P2P session {}", sessionId);
         }
+    }
+
+    private String findPeerIdByAddress(InetSocketAddress addr) {
+        for (Map.Entry<String, P2pSession> entry : sessions.entrySet()) {
+            P2pSession s = entry.getValue();
+            if (s.getPeerAddress() != null
+                    && s.getPeerAddress().getAddress().equals(addr.getAddress())
+                    && s.getPeerAddress().getPort() == addr.getPort()) {
+                return entry.getKey();
+            }
+        }
+        return null;
     }
 
     /**
      * tunnels 端：收到新 sessionId 时，连接本地服务并设置桥接
      * 使用第一个隧道配置的 localAddress:localPort
      */
-    private void connectToLocalService(int sessionId, byte[] firstPayload) {
+    private void connectToLocalService(int sessionId, byte[] firstPayload, String peerId) {
         if (clientConfig.getTunnels().isEmpty()) {
             log.warn("No tunnel config, cannot connect to local service");
             return;
@@ -408,6 +808,11 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         int port = tunnel.getLocalPort();
 
         log.info("P2P: new session {}, connecting to local service {}:{}", sessionId, host, port);
+
+        // 记录会话归属
+        if (peerId != null) {
+            sessionPeerMap.put(sessionId, peerId);
+        }
 
         Bootstrap bootstrap = new Bootstrap();
         bootstrap.group(new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory()))
@@ -449,7 +854,7 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
 
     /**
      * 本地服务桥接处理器（tunnels 端）
-     * 本地服务响应 → P2P UDP 发送给对端
+     * 本地服务响应 → P2P UDP 或中继发送给对端
      */
     private class LocalServiceP2pBridgeHandler extends io.netty.channel.SimpleChannelInboundHandler<ByteBuf> {
         private final int sessionId;
@@ -463,12 +868,17 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
             byte[] data = new byte[msg.readableBytes()];
             msg.readBytes(data);
 
-            // 找到对端并通过 P2P 发送
-            for (P2pSession session : sessions.values()) {
-                if (session.getState() == P2pSession.State.ESTABLISHED
-                        && session.getPeerAddress() != null) {
-                    udpChannel.sendData(session.getPeerAddress(), sessionId, data);
-                    break;
+            // 通过 P2pManager 发送（自动选择 UDP 或中继）
+            String peerId = sessionPeerMap.get(sessionId);
+            if (peerId != null) {
+                sendData(peerId, sessionId, data);
+            } else {
+                // 回退：查找任意已建立的会话
+                for (Map.Entry<String, P2pSession> entry : sessions.entrySet()) {
+                    if (entry.getValue().getState() == P2pSession.State.ESTABLISHED) {
+                        sendData(entry.getKey(), sessionId, data);
+                        break;
+                    }
                 }
             }
         }
@@ -533,6 +943,12 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         heartbeatScheduler.shutdownNow();
         if (upnpPortMapper != null) upnpPortMapper.deleteMapping();
         if (holePuncher != null) holePuncher.shutdown();
+        tcpPendingPeers.clear();
+        for (Channel ch : tcpPeerChannels.values()) {
+            ch.close();
+        }
+        if (tcpServerChannel != null) tcpServerChannel.close();
+        if (tcpGroup != null) tcpGroup.shutdownGracefully();
         if (udpChannel != null) udpChannel.shutdown();
     }
 

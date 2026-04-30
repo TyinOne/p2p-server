@@ -10,6 +10,8 @@ import org.springframework.stereotype.Component;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * P2P 信令处理器
@@ -21,8 +23,18 @@ public class P2pSignalingHandler {
 
     private final P2pRegistry registry;
 
+    /**
+     * 已尝试 TCP 打洞的对端组合（"peerA:peerB" 格式，排序后存储）
+     * 用于在 TCP 打洞也失败后回退到中继模式
+     */
+    private final Set<String> tcpPunchAttempted = ConcurrentHashMap.newKeySet();
+
     public P2pSignalingHandler(P2pRegistry registry) {
         this.registry = registry;
+    }
+
+    private static String pairKey(String a, String b) {
+        return a.compareTo(b) < 0 ? a + ":" + b : b + ":" + a;
     }
 
     /**
@@ -56,7 +68,10 @@ public class P2pSignalingHandler {
             localAddr = localAddr + ":" + port;
         }
 
-        registry.updatePublicAddress(clientId, publicAddr, localAddr);
+        int tcpPort = (msg.getTcpPort() != null && msg.getTcpPort() > 0)
+                ? msg.getTcpPort() : 0;
+
+        registry.updatePublicAddress(clientId, publicAddr, localAddr, tcpPort);
 
         TunnelMessage response = new TunnelMessage();
         response.setType(TunnelMessage.MessageType.P2P_BINDING_RESPONSE);
@@ -64,8 +79,8 @@ public class P2pSignalingHandler {
         response.setCandidateAddr(publicAddr);
         ctx.writeAndFlush(response);
 
-        log.info("P2P binding for {}: public={}, local={}, udpPort={}",
-                clientId, publicAddr, localAddr, msg.getUdpPort());
+        log.info("P2P binding for {}: public={}, local={}, udpPort={}, tcpPort={}",
+                clientId, publicAddr, localAddr, msg.getUdpPort(), tcpPort);
     }
 
     /**
@@ -105,11 +120,11 @@ public class P2pSignalingHandler {
         sendCandidate(ctx.channel(), requesterId, peerId, peerAddr);
         sendCandidate(peerChannel, peerId, requesterId, requesterAddr);
 
-        // 通知双方开始打洞
+        // 通知双方开始 UDP 打洞
         sendHolePunch(ctx.channel(), requesterId, peerId);
         sendHolePunch(peerChannel, peerId, requesterId);
 
-        log.info("P2P hole punch initiated between {} ({}) and {} ({})",
+        log.info("P2P UDP hole punch initiated between {} ({}) and {} ({})",
                 requesterId, requesterAddr, peerId, peerAddr);
     }
 
@@ -124,11 +139,69 @@ public class P2pSignalingHandler {
 
     /**
      * 处理 P2P 失败通知
+     * 先尝试 TCP 打洞，TCP 打洞也失败后回退到中继模式
      */
     public void handleFailed(ChannelHandlerContext ctx, TunnelMessage msg) {
         String clientId = msg.getClientId();
         String peerId = msg.getPeerId();
-        log.warn("P2P channel failed: {} ↔ {}, falling back to relay", clientId, peerId);
+        String pairKey = pairKey(clientId, peerId);
+
+        // 如果还没尝试过 TCP 打洞，先尝试
+        if (tcpPunchAttempted.add(pairKey)) {
+            String requesterTcpAddr = getTcpAddress(clientId);
+            String peerTcpAddr = getTcpAddress(peerId);
+
+            if (requesterTcpAddr != null && peerTcpAddr != null) {
+                log.warn("P2P UDP failed: {} ↔ {}, trying TCP punch", clientId, peerId);
+                Channel requesterChannel = ctx.channel();
+                Channel peerChannel = registry.getChannel(peerId);
+
+                if (requesterChannel != null && requesterChannel.isActive()) {
+                    sendTcpPunchStart(requesterChannel, clientId, peerId, peerTcpAddr);
+                }
+                if (peerChannel != null && peerChannel.isActive()) {
+                    sendTcpPunchStart(peerChannel, peerId, clientId, requesterTcpAddr);
+                }
+                return;
+            }
+            log.warn("TCP addresses not available for {} ↔ {}, falling back to relay", clientId, peerId);
+        }
+
+        // TCP 打洞也失败了（或不可用），回退到中继模式
+        log.warn("P2P all direct methods failed: {} ↔ {}, falling back to relay", clientId, peerId);
+        tcpPunchAttempted.remove(pairKey);
+
+        Channel requesterChannel = ctx.channel();
+        Channel peerChannel = registry.getChannel(peerId);
+
+        if (requesterChannel != null && requesterChannel.isActive()) {
+            sendRelayReady(requesterChannel, clientId, peerId);
+        }
+        if (peerChannel != null && peerChannel.isActive()) {
+            sendRelayReady(peerChannel, peerId, clientId);
+        }
+    }
+
+    /**
+     * 获取客户端的 TCP 打洞地址（公网IP:TCP监听端口）
+     */
+    private String getTcpAddress(String clientId) {
+        String publicAddr = registry.getPublicAddress(clientId);
+        int tcpPort = registry.getTcpPort(clientId);
+        if (publicAddr == null || tcpPort <= 0) return null;
+
+        int colonIdx = publicAddr.lastIndexOf(':');
+        if (colonIdx <= 0) return null;
+        return publicAddr.substring(0, colonIdx) + ":" + tcpPort;
+    }
+
+    private void sendRelayReady(Channel channel, String targetId, String peerId) {
+        TunnelMessage msg = new TunnelMessage();
+        msg.setType(TunnelMessage.MessageType.RELAY_READY);
+        msg.setClientId(targetId);
+        msg.setPeerId(peerId);
+        channel.writeAndFlush(msg);
+        log.info("Sent RELAY_READY to {} for peer {}", targetId, peerId);
     }
 
     private void sendCandidate(Channel channel, String targetId, String peerId, String candidateAddr) {
@@ -145,6 +218,15 @@ public class P2pSignalingHandler {
         msg.setType(TunnelMessage.MessageType.P2P_HOLE_PUNCH);
         msg.setClientId(targetId);
         msg.setPeerId(peerId);
+        channel.writeAndFlush(msg);
+    }
+
+    private void sendTcpPunchStart(Channel channel, String targetId, String peerId, String peerTcpAddr) {
+        TunnelMessage msg = new TunnelMessage();
+        msg.setType(TunnelMessage.MessageType.TCP_PUNCH_START);
+        msg.setClientId(targetId);
+        msg.setPeerId(peerId);
+        msg.setCandidateAddr(peerTcpAddr);
         channel.writeAndFlush(msg);
     }
 

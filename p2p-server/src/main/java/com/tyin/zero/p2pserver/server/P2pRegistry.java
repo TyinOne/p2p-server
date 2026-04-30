@@ -34,7 +34,8 @@ public class P2pRegistry {
             Channel channel,
             String publicAddress,
             String localAddress,
-            List<TunnelExposeConfig> tunnels
+            List<TunnelExposeConfig> tunnels,
+            int tcpPort
     ) {}
 
     /**
@@ -44,7 +45,7 @@ public class P2pRegistry {
         InetSocketAddress addr = (InetSocketAddress) channel.remoteAddress();
         String publicAddr = addr.getHostString() + ":" + addr.getPort();
 
-        ClientInfo info = new ClientInfo(clientId, channel, publicAddr, null, tunnels);
+        ClientInfo info = new ClientInfo(clientId, channel, publicAddr, null, tunnels, 0);
         clientRegistry.put(clientId, info);
 
         if (tunnels != null) {
@@ -75,12 +76,13 @@ public class P2pRegistry {
     /**
      * 更新客户端公网地址和局域网地址
      */
-    public void updatePublicAddress(String clientId, String publicAddress, String localAddress) {
+    public void updatePublicAddress(String clientId, String publicAddress, String localAddress, int tcpPort) {
         ClientInfo old = clientRegistry.get(clientId);
         if (old != null) {
             clientRegistry.put(clientId, new ClientInfo(
-                    clientId, old.channel(), publicAddress, localAddress, old.tunnels()));
-            log.info("Updated public address for {}: {} (local: {})", clientId, publicAddress, localAddress);
+                    clientId, old.channel(), publicAddress, localAddress, old.tunnels(), tcpPort));
+            log.info("Updated public address for {}: {} (local: {}, tcpPort: {})",
+                    clientId, publicAddress, localAddress, tcpPort);
         }
     }
 
@@ -104,6 +106,14 @@ public class P2pRegistry {
     public String getPublicAddress(String clientId) {
         ClientInfo info = clientRegistry.get(clientId);
         return info != null ? info.publicAddress() : null;
+    }
+
+    /**
+     * 获取客户端 TCP 端口
+     */
+    public int getTcpPort(String clientId) {
+        ClientInfo info = clientRegistry.get(clientId);
+        return info != null ? info.tcpPort() : 0;
     }
 
     /**

@@ -56,6 +56,9 @@ public class TunnelServerHandler extends SimpleChannelInboundHandler<TunnelMessa
             case P2P_REQUEST -> p2pSignalingHandler.handleRequest(ctx, msg);
             case P2P_SUCCESS -> p2pSignalingHandler.handleSuccess(ctx, msg);
             case P2P_FAILED -> p2pSignalingHandler.handleFailed(ctx, msg);
+            case TCP_PUNCH -> {} // TCP port reported in binding, no separate handling needed
+            // 中继数据
+            case RELAY_DATA -> handleRelayData(ctx, msg);
             default -> log.warn("Unknown message type from client {}: {}", clientId, msg.getType());
         }
     }
@@ -112,6 +115,29 @@ public class TunnelServerHandler extends SimpleChannelInboundHandler<TunnelMessa
         response.setClientId(clientId);
         response.setTimestamp(System.currentTimeMillis());
         ctx.writeAndFlush(response);
+    }
+
+    private void handleRelayData(ChannelHandlerContext ctx, TunnelMessage msg) {
+        String peerId = msg.getPeerId();
+        if (peerId == null) {
+            log.warn("RELAY_DATA without peerId from {}", clientId);
+            return;
+        }
+
+        Channel peerChannel = clientChannels.get(peerId);
+        if (peerChannel == null || !peerChannel.isActive()) {
+            log.warn("RELAY_DATA: peer {} not connected", peerId);
+            return;
+        }
+
+        // 转发给对端，clientId 设为发送方（让接收方知道是谁发的）
+        TunnelMessage relay = new TunnelMessage();
+        relay.setType(TunnelMessage.MessageType.RELAY_DATA);
+        relay.setClientId(clientId);
+        relay.setPeerId(clientId);
+        relay.setSessionId(msg.getSessionId());
+        relay.setPayload(msg.getPayload());
+        peerChannel.writeAndFlush(relay);
     }
 
     @Override
