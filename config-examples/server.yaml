@@ -1,0 +1,8 @@
+# 公网服务器配置
+# 使用方式: ./p2p-server.sh start -c config/server.yaml
+
+p2p:
+  server:
+    auth-mode: SHARED_KEY
+    shared-key: "my-secret-key-123"
+    port: 8084

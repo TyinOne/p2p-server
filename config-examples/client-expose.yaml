@@ -1,0 +1,27 @@
+# 客户端配置 - 暴露本地服务
+# 此客户端暴露本机 RDP 和 Web 服务，供其他客户端通过 P2P 连接
+# 使用方式: java -jar p2p-client.jar --spring.config.additional-location=file:config/client-expose.yaml
+
+p2p:
+  client:
+    auth: "my-secret-key-123"
+    server-host: "1.2.3.4"
+    port: 8084
+    client-id: "home-pc"
+
+    p2p:
+      udp-port: 0
+
+    # 暴露的隧道（本机服务，供对端连接）
+    tunnels:
+      - remote-port: 3389
+        local-port: 3389
+        local-address: 127.0.0.1
+        description: "RDP 远程桌面"
+
+      - remote-port: 8080
+        local-port: 8080
+        local-address: 127.0.0.1
+        description: "Web 服务"
+
+    connect: []

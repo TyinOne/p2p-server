@@ -1,0 +1,22 @@
+# 客户端配置 - 连接对端服务
+# 此客户端连接 home-pc 暴露的 RDP 服务，本地监听 13389 端口
+# 使用方式: java -jar p2p-client.jar --spring.config.additional-location=file:config/client-connect.yaml
+
+p2p:
+  client:
+    auth: "my-secret-key-123"
+    server-host: "1.2.3.4"
+    port: 8084
+    client-id: "my-laptop"
+
+    p2p:
+      udp-port: 0
+
+    tunnels: []
+
+    # 连接对端服务
+    connect:
+      - peer-id: "home-pc"
+        remote-port: 3389
+        local-bind-port: 13389
+        description: "家里电脑 RDP"

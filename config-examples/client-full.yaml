@@ -1,0 +1,32 @@
+# 客户端配置 - 完整示例（同时暴露和连接）
+# 此客户端既暴露本地服务，也连接对端服务
+# 使用方式: java -jar p2p-client.jar --spring.config.additional-location=file:config/client-full.yaml
+
+p2p:
+  client:
+    auth: "my-secret-key-123"
+    server-host: "1.2.3.4"
+    port: 8084
+    client-id: "client-a"
+
+    # P2P 通道配置（可选，以下为默认值）
+    p2p:
+      udp-port: 0                    # 本地 UDP 端口，0=系统分配
+      hole-punch-timeout-ms: 10000   # 打洞超时（毫秒）
+      hole-punch-interval-ms: 500    # 打洞发送间隔（毫秒）
+      heartbeat-interval-ms: 15000   # UDP 心跳间隔（毫秒）
+      session-timeout-ms: 60000      # 会话超时（毫秒）
+
+    # 暴露的隧道（本机服务，供对端连接）
+    tunnels:
+      - remote-port: 3390
+        local-port: 3389
+        local-address: 127.0.0.1
+        description: "本机 RDP"
+
+    # 连接对端服务
+    connect:
+      - peer-id: "client-b"
+        remote-port: 3390
+        local-bind-port: 13390
+        description: "连接 client-b 的 RDP"

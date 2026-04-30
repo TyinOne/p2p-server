@@ -1,0 +1,25 @@
+# ============================================
+# P2P Tunnel Server - Base Configuration
+# 此文件包含不可被覆盖的基础配置
+# ============================================
+
+# Spring Boot 基础配置
+spring:
+  application:
+    name: p2p-tunnel-server
+  main:
+    web-application-type: none  # 禁用 Web 服务器（使用 Netty）
+    banner-mode: off
+
+# 日志配置由 logback-spring.xml 管理
+
+# ============================================
+# P2P 应用配置（可以被外部配置覆盖）
+# ============================================
+
+# 认证配置
+p2p:
+  server:
+    auth-mode: SHARED_KEY  # SHARED_KEY, RSA_KEYPAIR
+    shared-key: "your-secret-key-change-this"
+    port: 8084

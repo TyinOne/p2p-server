@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.0.6</version>
+        <relativePath/> <!-- lookup parent from repository -->
+    </parent>
+    
+    <groupId>com.tyin.zero</groupId>
+    <artifactId>tyin-p2p</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    
+    <name>tyin-p2p</name>
+    <description>Tyin P2P Tunnel - Parent Project</description>
+
+    <modules>
+        <module>p2p-common</module>
+        <module>p2p-server</module>
+        <module>p2p-client</module>
+    </modules>
+
+    <properties>
+        <java.version>21</java.version>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+    
+    <!-- 依赖管理 -->
+    <dependencyManagement>
+        <dependencies>
+            <!-- 内部模块 -->
+            <dependency>
+                <groupId>com.tyin.zero</groupId>
+                <artifactId>p2p-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            
+            <!-- Netty (仅包含需要的模块) -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-handler</artifactId>
+                <version>4.1.118.Final</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-codec</artifactId>
+                <version>4.1.118.Final</version>
+            </dependency>
+
+            <!-- Jackson -->
+            <dependency>
+                <groupId>com.fasterxml.jackson.core</groupId>
+                <artifactId>jackson-databind</artifactId>
+                <version>2.18.2</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fasterxml.jackson.datatype</groupId>
+                <artifactId>jackson-datatype-jsr310</artifactId>
+                <version>2.18.2</version>
+            </dependency>
+
+            <!-- Lombok -->
+            <dependency>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+                <version>1.18.36</version>
+            </dependency>
+
+            <!-- JUnit 5 -->
+            <dependency>
+                <groupId>org.junit.jupiter</groupId>
+                <artifactId>junit-jupiter</artifactId>
+                <version>5.11.4</version>
+                <scope>test</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+    
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <configuration>
+                        <excludes>
+                            <exclude>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                            </exclude>
+                        </excludes>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>3.14.1</version>
+                    <configuration>
+                        <source>21</source>
+                        <target>21</target>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <inherited>false</inherited>
+                <executions>
+                    <execution>
+                        <id>assemble-build</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <!-- 清理并创建 build 目录 -->
+                                <delete dir="${project.basedir}/build" />
+                                <mkdir dir="${project.basedir}/build/config" />
+
+                                <!-- 复制 jar 文件 -->
+                                <copy file="${project.basedir}/p2p-server/target/p2p-server-${project.version}.jar"
+                                      todir="${project.basedir}/build" />
+                                <copy file="${project.basedir}/p2p-client/target/p2p-client-${project.version}.jar"
+                                      todir="${project.basedir}/build" />
+
+                                <!-- 复制脚本文件 -->
+                                <copy file="${project.basedir}/p2p-server/p2p-server.sh"
+                                      todir="${project.basedir}/build" />
+                                <copy file="${project.basedir}/p2p-server/p2p-server.bat"
+                                      todir="${project.basedir}/build" />
+                                <copy file="${project.basedir}/p2p-server/p2p-server.ps1"
+                                      todir="${project.basedir}/build" />
+                                <copy file="${project.basedir}/p2p-client/p2p-client.sh"
+                                      todir="${project.basedir}/build" />
+                                <copy file="${project.basedir}/p2p-client/p2p-client.bat"
+                                      todir="${project.basedir}/build" />
+                                <copy file="${project.basedir}/p2p-client/p2p-client.ps1"
+                                      todir="${project.basedir}/build" />
+
+                                <!-- 复制配置示例为 .example 后缀 -->
+                                <copy file="${project.basedir}/config-examples/server.yaml"
+                                      tofile="${project.basedir}/build/config/server.yaml.example" />
+                                <copy file="${project.basedir}/config-examples/client-expose.yaml"
+                                      tofile="${project.basedir}/build/config/client-expose.yaml.example" />
+                                <copy file="${project.basedir}/config-examples/client-connect.yaml"
+                                      tofile="${project.basedir}/build/config/client-connect.yaml.example" />
+                                <copy file="${project.basedir}/config-examples/client-full.yaml"
+                                      tofile="${project.basedir}/build/config/client-full.yaml.example" />
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
