@@ -739,6 +739,43 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
     }
 
     /**
+     * 处理对端离线通知（服务端推送）
+     */
+    public void handlePeerOffline(TunnelMessage msg) {
+        String peerId = msg.getPeerId();
+        if (peerId == null) return;
+
+        log.info("Peer {} went offline, cleaning up session", peerId);
+
+        // 从中继模式移除
+        relayPeers.remove(peerId);
+
+        // 关闭 TCP 打洞通道
+        Channel tcpChannel = tcpPeerChannels.remove(peerId);
+        if (tcpChannel != null) {
+            tcpChannel.close();
+        }
+
+        // 清理 TCP 待连接列表
+        tcpPendingPeers.entrySet().removeIf(e -> e.getValue().equals(peerId));
+
+        // 清理会话
+        P2pSession session = sessions.remove(peerId);
+        if (session != null) {
+            log.info("Session with {} cleaned up (was {})", peerId, session.getState());
+        }
+
+        // 关闭并清理 TCP 监听器
+        P2pTcpListener listener = tcpListeners.remove(peerId);
+        if (listener != null) {
+            listener.stop();
+        }
+
+        // 清理与此对端相关的隧道处理器
+        sessionPeerMap.entrySet().removeIf(e -> peerId.equals(e.getValue()));
+    }
+
+    /**
      * 注册隧道处理器
      */
     public void registerTunnelHandler(int sessionId, P2pTunnelHandler handler) {
@@ -923,15 +960,19 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
      * 发送心跳到所有活跃会话
      */
     private void sendHeartbeats() {
-        for (P2pSession session : sessions.values()) {
+        // 使用快照避免 ConcurrentModificationException
+        for (P2pSession session : new java.util.ArrayList<>(sessions.values())) {
             if (session.getState() == P2pSession.State.ESTABLISHED
                     && session.getPeerAddress() != null) {
                 udpChannel.sendHeartbeat(session.getPeerAddress(), 0);
 
-                // 检查会话超时
+                // 检查会话超时并清理
                 if (session.isExpired(clientConfig.getP2p().getSessionTimeoutMs())) {
-                    log.warn("P2P session with {} expired", session.getPeerId());
-                    session.setState(P2pSession.State.FAILED);
+                    log.warn("P2P session with {} expired, removing", session.getPeerId());
+                    sessions.remove(session.getPeerId(), session);
+                    relayPeers.remove(session.getPeerId());
+                    Channel ch = tcpPeerChannels.remove(session.getPeerId());
+                    if (ch != null) ch.close();
                 }
             }
         }

@@ -142,7 +142,8 @@ p2p:
     port: 8084
     client-id: "home-pc"
     p2p:
-      udp-port: 0
+      udp-port: 5000                 # 固定 UDP 端口（防火墙需放行）
+      upnp-enabled: false            # 路由器后面时开启
     tunnels:
       - remote-port: 3389
         local-port: 3389
@@ -160,7 +161,8 @@ p2p:
     port: 8084
     client-id: "my-laptop"
     p2p:
-      udp-port: 0
+      udp-port: 5001                 # 固定 UDP 端口（两端不要相同）
+      upnp-enabled: false
     tunnels: []
     connect:
       - peer-id: "home-pc"
@@ -192,7 +194,7 @@ p2p:
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `p2p.server.auth-mode` | SHARED_KEY | 认证模式：SHARED_KEY / RSA_KEYPAIR |
+| `p2p.server.auth-mode` | SHARED_KEY | 认证模式：SHARED_KEY / RSA_KEYPAIR / HYBRID |
 | `p2p.server.shared-key` | - | 共享密钥 |
 | `p2p.server.port` | 8084 | 信令端口 |
 
@@ -234,6 +236,19 @@ java -cp p2p-server.jar com.tyin.zero.p2pserver.tools.ClientManager generate-key
 java -cp p2p-server.jar com.tyin.zero.p2pserver.tools.ClientManager add client-home $(cat keys/client-home-public.key)
 
 # 将私钥复制到客户端
+```
+
+### HYBRID 模式
+
+RSA 公钥认证优先，失败时回退到共享密钥。适合平滑迁移场景。
+
+```yaml
+# 服务端
+p2p.server.auth-mode: HYBRID
+p2p.server.shared-key: "fallback-key"
+
+# 客户端（使用 RSA 私钥签名认证）
+p2p.client.auth: "fallback-key"  # 私钥认证失败时使用共享密钥
 ```
 
 ---

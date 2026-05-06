@@ -126,7 +126,13 @@ public class TunnelServerHandler extends SimpleChannelInboundHandler<TunnelMessa
 
         Channel peerChannel = clientChannels.get(peerId);
         if (peerChannel == null || !peerChannel.isActive()) {
-            log.warn("RELAY_DATA: peer {} not connected", peerId);
+            log.warn("RELAY_DATA: peer {} not connected, notifying sender {}", peerId, clientId);
+            TunnelMessage error = new TunnelMessage();
+            error.setType(TunnelMessage.MessageType.ERROR);
+            error.setClientId(clientId);
+            error.setPeerId(peerId);
+            error.setPayload(("Peer " + peerId + " is not connected").getBytes(StandardCharsets.UTF_8));
+            ctx.writeAndFlush(error);
             return;
         }
 
@@ -143,11 +149,30 @@ public class TunnelServerHandler extends SimpleChannelInboundHandler<TunnelMessa
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
         if (clientId != null) {
+            // 通知所有对端此客户端已离线
+            notifyPeerOffline(clientId);
             clientChannels.remove(clientId);
             p2pSignalingHandler.handleUnregister(clientId);
             log.info("Client {} disconnected", clientId);
         } else {
             log.info("Unauthenticated client disconnected");
+        }
+    }
+
+    /**
+     * 通知所有客户端指定对端已离线
+     */
+    private void notifyPeerOffline(String offlineClientId) {
+        TunnelMessage offlineMsg = new TunnelMessage();
+        offlineMsg.setType(TunnelMessage.MessageType.PEER_OFFLINE);
+        offlineMsg.setPeerId(offlineClientId);
+        for (Map.Entry<String, Channel> entry : clientChannels.entrySet()) {
+            if (entry.getKey().equals(offlineClientId)) continue;
+            Channel ch = entry.getValue();
+            if (ch.isActive()) {
+                offlineMsg.setClientId(entry.getKey());
+                ch.writeAndFlush(offlineMsg);
+            }
         }
     }
 

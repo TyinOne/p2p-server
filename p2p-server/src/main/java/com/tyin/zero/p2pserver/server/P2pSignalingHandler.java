@@ -48,6 +48,8 @@ public class P2pSignalingHandler {
      * 处理客户端注销
      */
     public void handleUnregister(String clientId) {
+        // 清理与该客户端相关的 TCP 打洞记录
+        tcpPunchAttempted.removeIf(key -> key.contains(clientId));
         registry.unregisterClient(clientId);
     }
 

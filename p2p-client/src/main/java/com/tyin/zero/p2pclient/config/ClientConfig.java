@@ -58,7 +58,7 @@ public class ClientConfig {
         /**
          * 是否启用 UPnP 自动端口映射
          */
-        private boolean upnpEnabled = true;
+        private boolean upnpEnabled = false;
 
         /**
          * P2P 打洞超时（毫秒）

@@ -99,7 +99,7 @@ p2p:
     client-id: "home-pc"
 
     p2p:
-      udp-port: 0
+      udp-port: 5000                 # 固定 UDP 端口（防火墙需放行）
 
     tunnels:
       - remote-port: 3389
@@ -146,7 +146,7 @@ p2p:
     client-id: "my-laptop"
 
     p2p:
-      udp-port: 0
+      udp-port: 5001                 # 固定 UDP 端口（与被控端不同）
 
     tunnels: []
 

@@ -74,6 +74,7 @@ public class TunnelClientHandler extends SimpleChannelInboundHandler<TunnelMessa
             // 中继
             case RELAY_READY -> p2pManager.handleRelayReady(msg);
             case RELAY_DATA -> p2pManager.handleRelayData(msg);
+            case PEER_OFFLINE -> p2pManager.handlePeerOffline(msg);
             default -> log.debug("Ignored message type: {}", msg.getType());
         }
     }

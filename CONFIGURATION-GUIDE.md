@@ -26,14 +26,14 @@
 # config/server.yaml
 p2p:
   server:
-    auth-mode: SHARED_KEY         # SHARED_KEY 或 RSA_KEYPAIR
+    auth-mode: SHARED_KEY         # SHARED_KEY / RSA_KEYPAIR / HYBRID
     shared-key: "my-secret-key"   # 共享密钥
     port: 8084                    # 信令端口
 ```
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `auth-mode` | SHARED_KEY | 认证模式 |
+| `auth-mode` | SHARED_KEY | 认证模式：SHARED_KEY / RSA_KEYPAIR / HYBRID |
 | `shared-key` | - | 共享密钥 |
 | `port` | 8084 | 客户端连接端口 |
 

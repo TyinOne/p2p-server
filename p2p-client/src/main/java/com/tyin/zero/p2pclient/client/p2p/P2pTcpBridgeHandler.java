@@ -24,6 +24,7 @@ public class P2pTcpBridgeHandler extends SimpleChannelInboundHandler<ByteBuf> {
     private final String peerId;
     private final P2pManager p2pManager;
     private final boolean isSourceSide; // true=数据来源端(connect端), false=服务端(tunnels端)
+    private ChannelHandlerContext tcpCtx;
 
     public P2pTcpBridgeHandler(int sessionId, String peerId, P2pManager p2pManager, boolean isSourceSide) {
         this.sessionId = sessionId;
@@ -37,6 +38,12 @@ public class P2pTcpBridgeHandler extends SimpleChannelInboundHandler<ByteBuf> {
      */
     public static int nextSessionId() {
         return SESSION_ID_GEN.incrementAndGet();
+    }
+
+    @Override
+    public void channelActive(ChannelHandlerContext ctx) throws Exception {
+        this.tcpCtx = ctx;
+        super.channelActive(ctx);
     }
 
     @Override
@@ -54,8 +61,9 @@ public class P2pTcpBridgeHandler extends SimpleChannelInboundHandler<ByteBuf> {
      * 收到 P2P 数据时调用（由 P2pManager 分发）
      */
     public void onData(byte[] payload) {
-        // 需要获取当前 channel 并写入
-        // 这个方法通过 P2pTunnelHandler 接口回调
+        if (tcpCtx != null && tcpCtx.channel().isActive()) {
+            tcpCtx.writeAndFlush(tcpCtx.alloc().buffer().writeBytes(payload));
+        }
     }
 
     @Override

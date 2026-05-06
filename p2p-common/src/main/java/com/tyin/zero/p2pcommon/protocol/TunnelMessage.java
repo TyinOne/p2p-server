@@ -102,7 +102,6 @@ public class TunnelMessage {
         P2P_BINDING_RESPONSE,
         // P2P 连接建立
         P2P_REQUEST,
-        P2P_RESPONSE,
         P2P_CANDIDATE,
         P2P_HOLE_PUNCH,
         P2P_SUCCESS,
@@ -112,6 +111,8 @@ public class TunnelMessage {
         TCP_PUNCH_START,
         // 服务端中继
         RELAY_READY,
-        RELAY_DATA
+        RELAY_DATA,
+        // 对端离线通知
+        PEER_OFFLINE
     }
 }

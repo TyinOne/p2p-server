@@ -7,7 +7,6 @@ import org.springframework.stereotype.Component;
 
 import java.net.InetSocketAddress;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -22,12 +21,12 @@ public class P2pRegistry {
      * 端口注册表：remotePort → clientId
      * 客户端注册时动态填充
      */
-    private final Map<Integer, String> portRegistry = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, String> portRegistry = new ConcurrentHashMap<>();
 
     /**
      * 客户端注册信息
      */
-    private final Map<String, ClientInfo> clientRegistry = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ClientInfo> clientRegistry = new ConcurrentHashMap<>();
 
     public record ClientInfo(
             String clientId,
