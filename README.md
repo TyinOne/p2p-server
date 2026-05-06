@@ -2,35 +2,38 @@
 
 ## 项目简介
 
-Tyin P2P Tunnel 是一个基于 **Spring Boot 4.0** + **Netty 4.1** 的 P2P 内网穿透系统。客户端之间通过 UDP 打洞建立直连通道，服务器仅做信令中转，**零数据流量**。
+Tyin P2P Tunnel 是一个基于 **Spring Boot 4.0** + **Netty 4.1** 的 P2P 内网穿透系统。客户端之间优先通过 UDP/TCP 打洞建立直连通道，打洞失败时自动回退到服务端中继，确保连接始终可用。
 
 ### 核心特性
 
-- **P2P 直连** - UDP 打洞穿透 NAT，客户端数据不经过服务器
+- **多模式穿透** - UDP 打洞 → TCP 打洞 → 服务端中继，三级自动回退
 - **统一客户端** - 所有客户端配置结构完全相同，无角色区分
 - **声明式配置** - `tunnels` 暴露本地服务，`connect` 连接对端服务
 - **动态注册** - 客户端自注册隧道，服务器无需预配置
 - **混合认证** - 支持共享密钥和 RSA 密钥对两种认证方式
-- **跨平台** - 提供 Linux/Mac (sh) 和 Windows (bat) 管理脚本
+- **UPnP 支持** - 自动端口映射，简化路由器配置
+- **跨平台** - 提供 Linux/Mac (sh) 和 Windows (bat/ps1) 管理脚本
 
 ---
 
 ## 架构
 
 ```
-客户端 A (用户端)                    公网服务器（仅信令）                 客户端 B (内网端)
+客户端 A (用户端)                    公网服务器                       客户端 B (内网端)
 ┌──────────────────┐              ┌────────────────┐              ┌──────────────────┐
 │ p2p-client       │              │ p2p-server     │              │ p2p-client       │
 │                  │              │                │              │                  │
-│ connect:         │   UDP 打洞   │ P2pRegistry    │   UDP 打洞   │ tunnels:         │
-│  peer-id: B      │◄────────────►│ (信令路由)     │◄────────────►│  expose: 3389    │
+│ connect:         │   UDP/TCP    │ P2pRegistry    │   UDP/TCP    │ tunnels:         │
+│  peer-id: B      │◄──打洞直连──►│ (信令+中继)    │◄──打洞直连──►│  expose: 3389    │
 │  remote-port:3390│  直连通道    │                │  直连通道    │                  │
-│                  │              │ (零数据流量)   │              │                  │
-│ 本地 TCP 监听    │              └────────────────┘              │ TCP→内网服务     │
-│ :13390          │                                              │ → 127.0.0.1:3389│
+│                  │              │  打洞失败时    │              │                  │
+│ 本地 TCP 监听    │              │  转发数据流量  │              │ TCP→内网服务     │
+│ :13390          │              └────────────────┘              │ → 127.0.0.1:3389│
 └──────────────────┘                                              └──────────────────┘
          │                                                                 │
     mstsc /v:localhost:13390                                          RDP 服务:3389
+
+连接模式优先级: UDP 打洞 → TCP 打洞 → 服务端中继（兜底）
 ```
 
 ---
@@ -57,7 +60,7 @@ tyin-p2p/
 │       └── util/
 │           └── FilePermissionUtil.java
 │
-├── p2p-server/              # 服务端模块（仅信令）
+├── p2p-server/              # 服务端模块（信令 + 中继）
 │   └── src/main/java/com.tyin.zero.p2pserver/
 │       ├── config/
 │       │   └── ServerConfig.java
@@ -81,7 +84,8 @@ tyin-p2p/
 │               ├── P2pUdpChannel.java
 │               ├── P2pHolePuncher.java
 │               ├── P2pTcpListener.java
-│               └── P2pTcpBridgeHandler.java
+│               ├── P2pTcpBridgeHandler.java
+│               └── UpnpPortMapper.java
 │
 ├── config-examples/         # 配置示例
 ├── docs/                    # 文档
@@ -201,6 +205,7 @@ p2p:
 | `p2p.client.port` | 8084 | 服务端端口 |
 | `p2p.client.client-id` | 自动生成 | 客户端标识 |
 | `p2p.client.p2p.udp-port` | 0 | UDP 端口（0=系统分配） |
+| `p2p.client.p2p.upnp-enabled` | false | 自动 UPnP 端口映射 |
 | `p2p.client.p2p.hole-punch-timeout-ms` | 10000 | 打洞超时 |
 | `p2p.client.p2p.heartbeat-interval-ms` | 15000 | 心跳间隔 |
 

@@ -9,11 +9,15 @@
 你的笔记本 (外网)              公网服务器                家里电脑 (内网)
 ┌──────────────────┐        ┌────────────┐          ┌──────────────────┐
 │  RDP 客户端      │        │ p2p-server │          │ Windows + RDP    │
-│  mstsc           │        │ (信令)     │          │ p2p-client       │
+│  mstsc           │        │ (信令+中继) │          │ p2p-client       │
 │  p2p-client      │        │            │          │                  │
-│  连接 localhost  │◄─UDP──►│ (零数据)   │◄───UDP──►│ 监听 3389        │
-│  :13389          │  直连   │            │   直连   │                  │
+│  连接 localhost  │◄─UDP──►│ 打洞成功:  │◄───UDP──►│ 监听 3389        │
+│  :13389          │  直连   │ 零数据流量  │   直连   │                  │
+│                  │        │ 打洞失败:  │          │                  │
+│                  │◄───────►│ 服务端中继 │◄────────►│                  │
 └──────────────────┘        └────────────┘          └──────────────────┘
+
+连接模式: UDP 打洞 → TCP 打洞 → 服务端中继（自动回退）
 ```
 
 ---
@@ -188,8 +192,9 @@ mstsc /v:localhost:13389
 
 ### 打洞超时（Hole punch timed out）
 
-- 检查两端防火墙是否放行 UDP
-- 一端在对称 NAT (Symmetric NAT) 后面时无法打洞（需 TURN 中继，暂未实现）
+- 检查两端防火墙是否放行 UDP 端口
+- 一端在对称 NAT (Symmetric NAT) 后面时 UDP 打洞会失败，系统会自动尝试 TCP 打洞
+- TCP 打洞也失败时，自动回退到服务端中继模式（连接仍可用，但流量经过服务器）
 - 查看服务端日志确认两端公网地址是否正确
 
 ### 认证失败
@@ -204,8 +209,9 @@ mstsc /v:localhost:13389
 - RDP 端口是否是 3389（默认）
 - 本地防火墙是否放行 3389
 
-### 如何确认走的是 P2P 而不是 relay？
+### 如何确认连接模式？
 
-- 服务端日志不应有 `DATA` 消息
-- 客户端日志有 `P2P channel established`
-- `netstat -an | grep 8084` 确认服务端无大量数据传输
+- **UDP 直连**: 客户端日志有 `P2P channel established`，服务端无 `RELAY_DATA` 日志
+- **TCP 直连**: 客户端日志有 `P2P channel established via TCP punch`
+- **服务端中继**: 客户端日志有 `Relay mode ready for peer`，服务端有 `RELAY_DATA` 转发日志
+- `netstat -an | grep 8084` 可观察服务端数据流量（中继模式下有明显流量）
