@@ -122,12 +122,26 @@ public class P2pSignalingHandler {
         sendCandidate(ctx.channel(), requesterId, peerId, peerAddr);
         sendCandidate(peerChannel, peerId, requesterId, requesterAddr);
 
-        // 通知双方开始 UDP 打洞
-        sendHolePunch(ctx.channel(), requesterId, peerId);
-        sendHolePunch(peerChannel, peerId, requesterId);
+        // TCP 打洞优先尝试
+        String requesterTcpAddr = getTcpAddress(requesterId);
+        String peerTcpAddr = getTcpAddress(peerId);
 
-        log.info("P2P UDP hole punch initiated between {} ({}) and {} ({})",
-                requesterId, requesterAddr, peerId, peerAddr);
+        if (requesterTcpAddr != null && peerTcpAddr != null) {
+            log.info("P2P TCP punch initiated between {} ({}) and {} ({})",
+                    requesterId, requesterTcpAddr, peerId, peerTcpAddr);
+            // 标记 TCP 已尝试（后续 P2P_FAILED 直接回退中继）
+            tcpPunchAttempted.add(requesterId.compareTo(peerId) < 0
+                    ? requesterId + ":" + peerId : peerId + ":" + requesterId);
+            // 通知双方开始 TCP 打洞
+            sendTcpPunchStart(ctx.channel(), requesterId, peerId, peerTcpAddr);
+            sendTcpPunchStart(peerChannel, peerId, requesterId, requesterTcpAddr);
+        } else {
+            log.warn("TCP addresses not available for {} ↔ {}, falling back to UDP punch",
+                    requesterId, peerId);
+            // 回退到 UDP 打洞
+            sendHolePunch(ctx.channel(), requesterId, peerId);
+            sendHolePunch(peerChannel, peerId, requesterId);
+        }
     }
 
     /**

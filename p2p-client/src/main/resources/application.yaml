@@ -15,3 +15,23 @@ logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
     file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+p2p:
+  client:
+    auth: "my-secret-key-123"
+    server-host: "43.136.175.152"
+    port: 8084
+    client-id: "my-laptop"
+
+    p2p:
+      p2pPort: 5001                 # TCP/UDP 共用端口，防火墙需放行，两端不要相同
+      upnpEnabled: true            # 自动 UPnP 端口映射
+
+    tunnels: []
+
+    # 连接对端服务
+    connect:
+      - peer-id: "home-pc"
+        remote-port: 3389
+        local-bind-port: 13389
+        description: "家里电脑 RDP"

@@ -51,9 +51,9 @@ public class ClientConfig {
     @Data
     public static class P2pConfig {
         /**
-         * 本地 UDP 绑定端口（0=系统分配）
+         * P2P 通道端口（TCP/UDP 共用）
          */
-        private int udpPort = 0;
+        private int p2pPort = 0;
 
         /**
          * 是否启用 UPnP 自动端口映射
@@ -61,7 +61,12 @@ public class ClientConfig {
         private boolean upnpEnabled = false;
 
         /**
-         * P2P 打洞超时（毫秒）
+         * TCP 打洞超时（毫秒）
+         */
+        private long tcpHolePunchTimeoutMs = 8000;
+
+        /**
+         * UDP 打洞超时（毫秒）
          */
         private long holePunchTimeoutMs = 10000;
 

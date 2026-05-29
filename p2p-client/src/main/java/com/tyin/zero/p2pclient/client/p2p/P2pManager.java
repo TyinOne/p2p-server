@@ -90,8 +90,8 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         udpChannel = new P2pUdpChannel(this);
         holePuncher = new P2pHolePuncher(udpChannel);
 
-        int udpPort = clientConfig.getP2p().getUdpPort();
-        udpChannel.bind(udpPort).addListener(f -> {
+        int p2pPort = clientConfig.getP2p().getP2pPort();
+        udpChannel.bind(p2pPort).addListener(f -> {
             if (f.isSuccess()) {
                 int localPort = udpChannel.getLocalAddress().getPort();
                 log.info("P2P UDP channel ready on port {}", localPort);
@@ -110,13 +110,13 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
                     externalPort = localPort;
                 }
 
-                // 绑定 TCP 监听（用于 TCP 打洞）
-                bindTcpServer();
-
-                // 如果认证已完成，立即发送 binding 请求
-                if (serverCtx != null) {
-                    sendBindingRequest();
-                }
+                // 绑定 TCP 监听（用于 TCP 打洞），绑定完成后发送 binding
+                bindTcpServer(() -> {
+                    // 如果认证已完成，立即发送 binding 请求
+                    if (serverCtx != null) {
+                        sendBindingRequest();
+                    }
+                });
             }
         });
 
@@ -137,7 +137,7 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
      * 是否启用 P2P
      */
     public boolean isP2pEnabled() {
-        return clientConfig.getP2p() != null && clientConfig.getP2p().getUdpPort() >= 0
+        return clientConfig.getP2p() != null && clientConfig.getP2p().getP2pPort() >= 0
                 && (clientConfig.getTunnels() != null && !clientConfig.getTunnels().isEmpty()
                     || clientConfig.getConnect() != null && !clientConfig.getConnect().isEmpty());
     }
@@ -177,12 +177,16 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
 
     /**
      * 绑定 TCP 监听端口（用于 TCP 打洞）
+     *
+     * @param onBound 绑定成功后回调
      */
-    private void bindTcpServer() {
+    private void bindTcpServer(Runnable onBound) {
+        int p2pPort = clientConfig.getP2p().getP2pPort();
         tcpGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
         ServerBootstrap bootstrap = new ServerBootstrap();
         bootstrap.group(tcpGroup)
                 .channel(NioServerSocketChannel.class)
+                .option(ChannelOption.SO_REUSEADDR, true)
                 .childHandler(new ChannelInitializer<SocketChannel>() {
                     @Override
                     protected void initChannel(SocketChannel ch) {
@@ -194,13 +198,16 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
                     }
                 });
 
-        bootstrap.bind(0).addListener((ChannelFutureListener) f -> {
+        bootstrap.bind(p2pPort).addListener((ChannelFutureListener) f -> {
             if (f.isSuccess()) {
                 tcpServerChannel = f.channel();
                 tcpListenPort = ((InetSocketAddress) tcpServerChannel.localAddress()).getPort();
                 log.info("P2P TCP listener bound to port {}", tcpListenPort);
+                if (onBound != null) {
+                    onBound.run();
+                }
             } else {
-                log.error("Failed to bind P2P TCP listener", f.cause());
+                log.error("Failed to bind P2P TCP listener on port {}", p2pPort, f.cause());
             }
         });
     }
@@ -434,6 +441,8 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
 
             if (type == P2pUdpCodec.TYPE_DATA && peerId != null) {
                 handleTcpData(peerId, sessionId, payload);
+            } else if (peerId == null) {
+                log.warn("TCP punch data received but no matching peer found, discarding {} bytes", payload.length);
             }
         }
 
@@ -514,6 +523,8 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
 
             if (type == P2pUdpCodec.TYPE_DATA && peerId != null) {
                 handleTcpData(peerId, sessionId, payload);
+            } else if (peerId == null) {
+                log.warn("TCP punch server received data but no matching peer found, discarding {} bytes", payload.length);
             }
         }
 

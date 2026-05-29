@@ -10,7 +10,8 @@ p2p:
     client-id: "home-pc"
 
     p2p:
-      udp-port: 5000  # 固定 UDP 端口，防火墙需放行
+      p2pPort: 5000                 # TCP/UDP 共用端口，防火墙需放行
+      upnpEnabled: true            # 自动 UPnP 端口映射
 
     # 暴露的隧道（本机服务，供对端连接）
     tunnels:

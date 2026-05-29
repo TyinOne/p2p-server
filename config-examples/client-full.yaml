@@ -9,14 +9,15 @@ p2p:
     port: 8084
     client-id: "client-a"
 
-    # P2P 通道配置（可选，以下为默认值）
+    # P2P 通道配置
     p2p:
-      udp-port: 5000                 # 固定 UDP 端口，防火墙需放行
-      upnp-enabled: false            # 自动 UPnP 端口映射（路由器后面时开启）
-      hole-punch-timeout-ms: 10000   # 打洞超时（毫秒）
-      hole-punch-interval-ms: 500    # 打洞发送间隔（毫秒）
-      heartbeat-interval-ms: 15000   # UDP 心跳间隔（毫秒）
-      session-timeout-ms: 60000      # 会话超时（毫秒）
+      p2pPort: 5000                 # TCP/UDP 共用端口，防火墙需放行
+      upnpEnabled: true             # 自动 UPnP 端口映射（TCP+UDP 同时映射）
+      tcpHolePunchTimeoutMs: 8000   # TCP 打洞超时
+      holePunchTimeoutMs: 10000     # UDP 打洞超时（TCP 失败后）
+      holePunchIntervalMs: 500       # 打洞发送间隔
+      heartbeatIntervalMs: 15000    # UDP 心跳间隔
+      sessionTimeoutMs: 60000        # 会话超时
 
     # 暴露的隧道（本机服务，供对端连接）
     tunnels:

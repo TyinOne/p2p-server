@@ -22,7 +22,7 @@ public class UpnpPortMapper {
     private int mappedPort = -1;
 
     /**
-     * 添加 UDP 端口映射
+     * 添加 UDP + TCP 端口映射
      *
      * @param localPort 本地绑定端口
      * @return 映射成功后的外部端口，失败返回 -1
@@ -44,19 +44,27 @@ public class UpnpPortMapper {
             }
             log.info("UPnP control URL: {}", controlUrl);
 
-            // 3. 添加端口映射
-            if (addPortMapping(localPort, localPort, "UDP", "tyin-p2p")) {
-                mappedPort = localPort;
-                log.info("UPnP port mapping created: UDP {}", localPort);
-
-                // 4. 添加 Windows 防火墙规则
-                addFirewallRule(localPort);
-
-                return localPort;
-            } else {
-                log.warn("UPnP AddPortMapping failed");
+            // 3. 添加 UDP 端口映射
+            if (!addPortMapping(localPort, localPort, "UDP", "tyin-p2p")) {
+                log.warn("UPnP AddPortMapping failed for UDP");
                 return -1;
             }
+            log.info("UPnP port mapping created: UDP {}", localPort);
+
+            // 4. 添加 TCP 端口映射
+            if (!addPortMapping(localPort, localPort, "TCP", "tyin-p2p")) {
+                log.warn("UPnP AddPortMapping failed for TCP, UDP mapping succeeded");
+                // UDP 成功但 TCP 失败，仍视为成功
+            } else {
+                log.info("UPnP port mapping created: TCP {}", localPort);
+            }
+
+            // 5. 添加 Windows 防火墙规则
+            addFirewallRule(localPort, "UDP");
+            addFirewallRule(localPort, "TCP");
+
+            mappedPort = localPort;
+            return localPort;
         } catch (Exception e) {
             log.warn("UPnP port mapping failed: {}", e.getMessage());
             return -1;
@@ -64,7 +72,7 @@ public class UpnpPortMapper {
     }
 
     /**
-     * 删除端口映射
+     * 删除端口映射（UDP + TCP）
      */
     public void deleteMapping() {
         if (controlUrl != null && mappedPort > 0) {
@@ -72,36 +80,43 @@ public class UpnpPortMapper {
                 deletePortMapping(mappedPort, "UDP");
                 log.info("UPnP port mapping removed: UDP {}", mappedPort);
             } catch (Exception e) {
-                log.warn("Failed to remove UPnP mapping: {}", e.getMessage());
+                log.warn("Failed to remove UPnP UDP mapping: {}", e.getMessage());
             }
-            removeFirewallRule(mappedPort);
+            try {
+                deletePortMapping(mappedPort, "TCP");
+                log.info("UPnP port mapping removed: TCP {}", mappedPort);
+            } catch (Exception e) {
+                log.warn("Failed to remove UPnP TCP mapping: {}", e.getMessage());
+            }
+            removeFirewallRule(mappedPort, "UDP");
+            removeFirewallRule(mappedPort, "TCP");
             mappedPort = -1;
         }
     }
 
     /**
-     * 添加 Windows 防火墙入站规则（UDP）
+     * 添加 Windows 防火墙入站规则
      */
-    private void addFirewallRule(int port) {
-        String ruleName = "tyin-p2p-udp-" + port;
+    private void addFirewallRule(int port, String protocol) {
+        String ruleName = "tyin-p2p-" + protocol.toLowerCase() + "-" + port;
         try {
             String os = System.getProperty("os.name", "").toLowerCase();
             if (!os.contains("windows")) return;
 
             // 先删除旧规则（如果存在）
-            removeFirewallRule(port);
+            removeFirewallRule(port, protocol);
 
             ProcessBuilder pb = new ProcessBuilder(
                     "netsh", "advfirewall", "firewall", "add", "rule",
                     "name=" + ruleName,
-                    "dir=in", "action=allow", "protocol=UDP",
+                    "dir=in", "action=allow", "protocol=" + protocol,
                     "localport=" + port, "profile=any"
             );
             pb.redirectErrorStream(true);
             Process p = pb.start();
             int exitCode = p.waitFor();
             if (exitCode == 0) {
-                log.info("Firewall rule added: allow inbound UDP {}", port);
+                log.info("Firewall rule added: allow inbound {} {}", protocol, port);
             } else {
                 log.warn("Failed to add firewall rule (exit code {}), try running as administrator", exitCode);
             }
@@ -113,8 +128,8 @@ public class UpnpPortMapper {
     /**
      * 删除 Windows 防火墙规则
      */
-    private void removeFirewallRule(int port) {
-        String ruleName = "tyin-p2p-udp-" + port;
+    private void removeFirewallRule(int port, String protocol) {
+        String ruleName = "tyin-p2p-" + protocol.toLowerCase() + "-" + port;
         try {
             String os = System.getProperty("os.name", "").toLowerCase();
             if (!os.contains("windows")) return;
