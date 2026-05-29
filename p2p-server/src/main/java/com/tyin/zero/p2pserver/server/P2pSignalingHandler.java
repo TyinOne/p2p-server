@@ -10,8 +10,10 @@ import org.springframework.stereotype.Component;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * P2P 信令处理器
@@ -28,6 +30,15 @@ public class P2pSignalingHandler {
      * 用于在 TCP 打洞也失败后回退到中继模式
      */
     private final Set<String> tcpPunchAttempted = ConcurrentHashMap.newKeySet();
+
+    /**
+     * 待处理的 P2P 请求（peerId → 等待列表）
+     * 当 peer 不存在时，request 请求会被存入此处
+     * 当 peer 上线并发送 binding 时，触发这些请求
+     */
+    private final Map<String, ConcurrentLinkedQueue<PendingRequest>> pendingRequests = new ConcurrentHashMap<>();
+
+    public record PendingRequest(String requesterId, int remotePort, ChannelHandlerContext requesterCtx) {}
 
     public P2pSignalingHandler(P2pRegistry registry) {
         this.registry = registry;
@@ -83,6 +94,26 @@ public class P2pSignalingHandler {
 
         log.info("P2P binding for {}: public={}, local={}, udpPort={}, tcpPort={}",
                 clientId, publicAddr, localAddr, msg.getUdpPort(), tcpPort);
+
+        // 检查是否有等待此 client 的 P2P 请求，如有则触发
+        ConcurrentLinkedQueue<PendingRequest> waiting = pendingRequests.remove(clientId);
+        if (waiting != null && !waiting.isEmpty()) {
+            log.info("Found {} pending P2P requests for {}, triggering...", waiting.size(), clientId);
+            for (PendingRequest req; (req = waiting.poll()) != null; ) {
+                // 检查 requester 是否仍然在线
+                if (req.requesterCtx() != null && req.requesterCtx().channel().isActive()) {
+                    // 重新构造 P2P_REQUEST 并处理
+                    TunnelMessage requestMsg = new TunnelMessage();
+                    requestMsg.setType(TunnelMessage.MessageType.P2P_REQUEST);
+                    requestMsg.setClientId(req.requesterId());
+                    requestMsg.setPeerId(clientId);
+                    requestMsg.setRemotePort(req.remotePort());
+                    handleRequest(req.requesterCtx(), requestMsg);
+                } else {
+                    log.debug("Skipping stale pending request from {}", req.requesterId());
+                }
+            }
+        }
     }
 
     /**
@@ -100,7 +131,10 @@ public class P2pSignalingHandler {
         // 查找对端
         P2pRegistry.ClientInfo peerInfo = registry.getClient(peerId);
         if (peerInfo == null) {
-            sendError(ctx, requesterId, "Peer not found: " + peerId);
+            // peer 不在线，将请求加入等待队列
+            pendingRequests.computeIfAbsent(peerId, k -> new ConcurrentLinkedQueue<>())
+                    .add(new PendingRequest(requesterId, remotePort, ctx));
+            log.info("P2P request queued: {} waiting for peer {} to come online", requesterId, peerId);
             return;
         }
 
