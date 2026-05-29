@@ -22,6 +22,7 @@ import org.springframework.stereotype.Component;
 import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -326,7 +327,7 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
 
     /**
      * 处理 TCP 打洞开始指令
-     * 收到后同时向对端的 TCP 端口发起连接
+     * 收到后同时向对端的 TCP 端口发起连接，失败后降级 UDP 打洞
      */
     public void handleTcpPunchStart(TunnelMessage msg) {
         String peerId = msg.getPeerId();
@@ -352,16 +353,79 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         // 存储预期的对端地址（用于匹配入站连接）
         tcpPendingPeers.put(host + ":" + port, peerId);
 
-        // 同时发起 TCP 连接（双向打洞）
+        // 发起 TCP 连接，失败后降级 UDP
         for (int i = 0; i < 3; i++) {
-            connectTcpPunch(peerId, host, port);
+            connectTcpPunch(peerId, host, port, () -> {
+                // TCP 成功回调
+                onTcpPunchSuccess(peerId);
+            });
+        }
+
+        // 等待 TCP 结果，超时后降级 UDP
+        scheduleTcpTimeoutFallback(peerId, host, port);
+    }
+
+    /**
+     * 记录等待 TCP 结果的 peer（用于取消）
+     */
+    private final Set<String> tcpWaitingFallback = ConcurrentHashMap.newKeySet();
+
+    private void scheduleTcpTimeoutFallback(String peerId, String host, int port) {
+        tcpWaitingFallback.add(peerId);
+        heartbeatScheduler.schedule(() -> {
+            if (!tcpWaitingFallback.remove(peerId)) return; // 已被成功回调处理
+
+            // 检查是否已有成功连接
+            Channel existingChannel = tcpPeerChannels.get(peerId);
+            if (existingChannel != null && existingChannel.isActive()) {
+                return; // TCP 已成功
+            }
+
+            log.info("TCP punch all attempts failed for {}, falling back to UDP", peerId);
+
+            // 降级 UDP 打洞
+            P2pSession session = sessions.get(peerId);
+            if (session != null && session.getPeerAddress() != null) {
+                holePuncher.startPunching(
+                        session.getPeerAddress(),
+                        clientConfig.getP2p().getHolePunchIntervalMs(),
+                        clientConfig.getP2p().getHolePunchTimeoutMs(),
+                        () -> {
+                            session.setState(P2pSession.State.ESTABLISHED);
+                            session.updateSeen();
+                            sendP2pSuccess(peerId);
+                            onP2pEstablished(peerId, session);
+                            log.info("P2P channel established via UDP fallback with {}", peerId);
+                        },
+                        () -> {
+                            // UDP 也失败
+                            session.setState(P2pSession.State.FAILED);
+                            log.warn("UDP fallback also failed for {}, sending P2P_FAILED", peerId);
+                            sendP2pFailed(peerId);
+                        }
+                );
+            } else {
+                sendP2pFailed(peerId);
+            }
+        }, 8, TimeUnit.SECONDS);
+    }
+
+    private void onTcpPunchSuccess(String peerId) {
+        tcpWaitingFallback.remove(peerId);
+        P2pSession session = sessions.get(peerId);
+        if (session != null && session.getState() != P2pSession.State.ESTABLISHED) {
+            session.setState(P2pSession.State.ESTABLISHED);
+            session.updateSeen();
+            sendP2pSuccess(peerId);
+            onP2pEstablished(peerId, session);
+            log.info("P2P channel established via TCP punch with {}", peerId);
         }
     }
 
     /**
      * 向对端 TCP 端口发起打洞连接
      */
-    private void connectTcpPunch(String peerId, String host, int port) {
+    private void connectTcpPunch(String peerId, String host, int port, Runnable onSuccess) {
         if (tcpGroup == null) {
             tcpGroup = new MultiThreadIoEventLoopGroup(1, NioIoHandler.newFactory());
         }
@@ -407,6 +471,11 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
                     tcpPeerChannels.remove(peerId, ch);
                     log.info("TCP punch channel closed for peer {}", peerId);
                 });
+
+                // 调用成功回调
+                if (onSuccess != null) {
+                    onSuccess.run();
+                }
             } else {
                 log.debug("TCP punch connect failed to {}:{} for peer {}: {}",
                         host, port, peerId,
