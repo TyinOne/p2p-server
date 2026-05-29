@@ -38,11 +38,14 @@ public class P2pSignalingHandler {
      */
     private final Map<String, ConcurrentLinkedQueue<PendingRequest>> pendingRequests = new ConcurrentHashMap<>();
 
-    public record PendingRequest(String requesterId, int remotePort, ChannelHandlerContext requesterCtx) {}
+    public record PendingRequest(String requesterId, int remotePort, ChannelHandlerContext requesterCtx, long timestamp) {}
 
     public P2pSignalingHandler(P2pRegistry registry) {
         this.registry = registry;
     }
+
+    private static final long PENDING_REQUEST_TIMEOUT_MS = 300_000; // 5 分钟超时
+    private static final int MAX_PENDING_REQUESTS_PER_PEER = 10; // 每个 peer 最大 pending 请求数
 
     private static String pairKey(String a, String b) {
         return a.compareTo(b) < 0 ? a + ":" + b : b + ":" + a;
@@ -99,7 +102,13 @@ public class P2pSignalingHandler {
         ConcurrentLinkedQueue<PendingRequest> waiting = pendingRequests.remove(clientId);
         if (waiting != null && !waiting.isEmpty()) {
             log.info("Found {} pending P2P requests for {}, triggering...", waiting.size(), clientId);
+            long now = System.currentTimeMillis();
             for (PendingRequest req; (req = waiting.poll()) != null; ) {
+                // 检查是否超时
+                if (now - req.timestamp() > PENDING_REQUEST_TIMEOUT_MS) {
+                    log.debug("Skipping expired pending request from {}", req.requesterId());
+                    continue;
+                }
                 // 检查 requester 是否仍然在线
                 if (req.requesterCtx() != null && req.requesterCtx().channel().isActive()) {
                     // 重新构造 P2P_REQUEST 并处理
@@ -131,9 +140,14 @@ public class P2pSignalingHandler {
         // 查找对端
         P2pRegistry.ClientInfo peerInfo = registry.getClient(peerId);
         if (peerInfo == null) {
-            // peer 不在线，将请求加入等待队列
-            pendingRequests.computeIfAbsent(peerId, k -> new ConcurrentLinkedQueue<>())
-                    .add(new PendingRequest(requesterId, remotePort, ctx));
+            // peer 不在线，将请求加入等待队列（限制数量防止攻击）
+            ConcurrentLinkedQueue<PendingRequest> queue = pendingRequests.computeIfAbsent(peerId, k -> new ConcurrentLinkedQueue<>());
+            if (queue.size() >= MAX_PENDING_REQUESTS_PER_PEER) {
+                log.warn("Too many pending requests for peer {}, rejecting request from {}", peerId, requesterId);
+                sendError(ctx, requesterId, "Too many pending requests for peer: " + peerId);
+                return;
+            }
+            queue.add(new PendingRequest(requesterId, remotePort, ctx, System.currentTimeMillis()));
             log.info("P2P request queued: {} waiting for peer {} to come online", requesterId, peerId);
             return;
         }
