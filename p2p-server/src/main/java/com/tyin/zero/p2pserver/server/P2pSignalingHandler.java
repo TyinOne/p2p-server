@@ -229,10 +229,11 @@ public class P2pSignalingHandler {
                 return;
             }
             log.warn("TCP addresses not available for {} ↔ {}, falling back to relay", clientId, peerId);
+        } else {
+            log.warn("P2P all direct methods failed: {} ↔ {}, falling back to relay", clientId, peerId);
         }
 
-        // TCP 打洞也失败了（或不可用），回退到中继模式
-        log.warn("P2P all direct methods failed: {} ↔ {}, falling back to relay", clientId, peerId);
+        // 回退到中继模式
         tcpPunchAttempted.remove(pairKey);
 
         Channel requesterChannel = ctx.channel();
