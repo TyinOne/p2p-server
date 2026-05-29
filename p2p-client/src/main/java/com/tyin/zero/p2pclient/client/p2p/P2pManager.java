@@ -285,6 +285,12 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         log.info("Handle hole punch: myId={}, msgClientId={}, peerId={}, sessions={}",
                 clientConfig.getClientId(), msg.getClientId(), peerId, sessions.keySet());
 
+        // 如果已在 relay 模式，忽略 hole punch 指令
+        if (relayPeers.contains(peerId)) {
+            log.info("Hole punch ignored for {}: already in relay mode", peerId);
+            return;
+        }
+
         P2pSession session = sessions.get(peerId);
 
         if (session == null) {
@@ -331,6 +337,13 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
      */
     public void handleTcpPunchStart(TunnelMessage msg) {
         String peerId = msg.getPeerId();
+
+        // 如果已在 relay 模式，忽略 TCP 打洞指令
+        if (relayPeers.contains(peerId)) {
+            log.info("TCP_PUNCH_START ignored for {}: already in relay mode", peerId);
+            return;
+        }
+
         String peerTcpAddr = msg.getCandidateAddr();
 
         if (peerTcpAddr == null) {
