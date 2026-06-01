@@ -28,6 +28,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * P2P 管理器
@@ -137,30 +138,38 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
      */
     private void scheduleDirectConnectRetry() {
         long retryIntervalMs = clientConfig.getP2p().getDirectConnectRetryIntervalMs();
+        AtomicBoolean retryRunning = new AtomicBoolean(false);
 
         heartbeatScheduler.scheduleWithFixedDelay(() -> {
-            for (Map.Entry<String, P2pSession> entry : sessions.entrySet()) {
-                String peerId = entry.getKey();
-                P2pSession session = entry.getValue();
+            // 防止上一次任务堆积
+            if (!retryRunning.compareAndSet(false, true)) {
+                log.debug("Background retry still running, skipping this cycle");
+                return;
+            }
 
-                // 只对 RELAY 模式且启用了并行连接的 peer 重试
-                if (!relayPeers.contains(peerId)) continue;
-                if (!clientConfig.getP2p().isParallelConnectEnabled()) continue;
-                if (session.getPeerAddress() == null) continue;
+            try {
+                for (Map.Entry<String, P2pSession> entry : sessions.entrySet()) {
+                    String peerId = entry.getKey();
+                    P2pSession session = entry.getValue();
 
-                // 如果已有成功的直连，跳过
-                Channel existingTcp = tcpPeerChannels.get(peerId);
-                if (existingTcp != null && existingTcp.isActive()) {
-                    log.debug("Background retry skipped for {}: direct TCP already exists", peerId);
-                    continue;
-                }
-                if (session.getMode() != ConnectionMode.RELAY
-                        && session.getState() == P2pSession.State.ESTABLISHED) {
-                    log.debug("Background retry skipped for {}: already in direct mode", peerId);
-                    continue;
-                }
+                    // 只对 RELAY 模式且启用了并行连接的 peer 重试
+                    if (!relayPeers.contains(peerId)) continue;
+                    if (!clientConfig.getP2p().isParallelConnectEnabled()) continue;
+                    if (session.getPeerAddress() == null) continue;
 
-                log.debug("Background retry: checking direct connect for {}", peerId);
+                    // 如果已有成功的直连，跳过
+                    Channel existingTcp = tcpPeerChannels.get(peerId);
+                    if (existingTcp != null && existingTcp.isActive()) {
+                        log.debug("Background retry skipped for {}: direct TCP already exists", peerId);
+                        continue;
+                    }
+                    if (session.getMode() != ConnectionMode.RELAY
+                            && session.getState() == P2pSession.State.ESTABLISHED) {
+                        log.debug("Background retry skipped for {}: already in direct mode", peerId);
+                        continue;
+                    }
+
+                    log.debug("Background retry: checking direct connect for {}", peerId);
 
                 // 发起 TCP 连接重试
                 String host = session.getPeerAddress().getHostString();
@@ -195,6 +204,9 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
                         },
                         () -> log.debug("Background UDP retry failed for {}", peerId)
                 );
+            }
+            } finally {
+                retryRunning.set(false);
             }
         }, retryIntervalMs, retryIntervalMs, TimeUnit.MILLISECONDS);
     }
