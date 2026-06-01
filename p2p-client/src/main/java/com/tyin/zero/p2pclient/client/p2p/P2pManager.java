@@ -462,6 +462,21 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
                         () -> {
                             session.setState(P2pSession.State.ESTABLISHED);
                             session.updateSeen();
+                            session.setMode(ConnectionMode.UDP_DIRECT);
+
+                            // 自动切换逻辑（与 TCP 类似）
+                            if (clientConfig.getP2p().isAutoSwitchToDirect() && relayPeers.contains(peerId)) {
+                                P2pTcpListener listener = tcpListeners.get(peerId);
+                                boolean hasActive = listener != null && listener.hasActiveConnection();
+
+                                if (!hasActive || clientConfig.getP2p().isSwitchDuringActiveConnection()) {
+                                    log.info("Switching from RELAY to UDP_DIRECT for peer {}", peerId);
+                                    relayPeers.remove(peerId);
+                                } else {
+                                    log.info("UDP punch succeeded for {} but active connection exists, keeping RELAY", peerId);
+                                }
+                            }
+
                             sendP2pSuccess(peerId);
                             onP2pEstablished(peerId, session);
                             log.info("P2P channel established via UDP fallback with {}", peerId);
@@ -481,14 +496,51 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
 
     private void onTcpPunchSuccess(String peerId) {
         tcpWaitingFallback.remove(peerId);
-        P2pSession session = sessions.get(peerId);
-        if (session != null && session.getState() != P2pSession.State.ESTABLISHED) {
-            session.setState(P2pSession.State.ESTABLISHED);
-            session.updateSeen();
+
+        // 检查是否启用了自动切换且当前是 RELAY 模式
+        if (clientConfig.getP2p().isAutoSwitchToDirect() && relayPeers.contains(peerId)) {
+            // 检查是否有活跃连接
+            P2pTcpListener listener = tcpListeners.get(peerId);
+            boolean hasActive = listener != null && listener.hasActiveConnection();
+
+            if (hasActive && !clientConfig.getP2p().isSwitchDuringActiveConnection()) {
+                log.info("TCP punch succeeded for {} but active connection exists, keeping RELAY", peerId);
+                // 保持 RELAY 模式，但更新会话状态
+                P2pSession session = sessions.get(peerId);
+                if (session != null) {
+                    session.setState(P2pSession.State.ESTABLISHED);
+                    session.updateSeen();
+                    session.setMode(ConnectionMode.TCP_DIRECT);
+                }
+                sendP2pSuccess(peerId);
+                return;
+            }
+
+            // 执行切换
+            log.info("Switching from RELAY to TCP_DIRECT for peer {}", peerId);
+            relayPeers.remove(peerId);
+
+            P2pSession session = sessions.get(peerId);
+            if (session != null) {
+                session.setState(P2pSession.State.ESTABLISHED);
+                session.updateSeen();
+                session.setMode(ConnectionMode.TCP_DIRECT);
+            }
+
             sendP2pSuccess(peerId);
             onP2pEstablished(peerId, session);
-            log.info("P2P channel established via TCP punch with {}", peerId);
+        } else {
+            P2pSession session = sessions.get(peerId);
+            if (session != null && session.getState() != P2pSession.State.ESTABLISHED) {
+                session.setState(P2pSession.State.ESTABLISHED);
+                session.updateSeen();
+                session.setMode(ConnectionMode.TCP_DIRECT);
+                sendP2pSuccess(peerId);
+                onP2pEstablished(peerId, session);
+            }
         }
+
+        log.info("P2P channel established via TCP punch with {}", peerId);
     }
 
     /**
