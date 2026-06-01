@@ -812,18 +812,24 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
      * P2P 通道建立后的回调
      */
     private void onP2pEstablished(String peerId, P2pSession session) {
-        String mode = relayPeers.contains(peerId) ? "RELAY" : "P2P_DIRECT";
+        String mode = relayPeers.contains(peerId) ? "RELAY" :
+                (session.getMode() == ConnectionMode.TCP_DIRECT ? "TCP_DIRECT" :
+                 session.getMode() == ConnectionMode.UDP_DIRECT ? "UDP_DIRECT" : "P2P_DIRECT");
         log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         log.info("P2P connection established with {}", peerId);
         log.info("Connection mode: {}", mode);
         log.info("Peer address: {}", session.getPeerAddress());
+        log.info("Local bind port: {}", getLocalBindPort(peerId));
         log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
         // 找到对应的 connect 配置，启动本地 TCP 监听
         if (clientConfig.getConnect() != null) {
             for (ClientConfig.PeerTunnel peerTunnel : clientConfig.getConnect()) {
                 if (peerId.equals(peerTunnel.getPeerId())) {
-                    startLocalTcpListener(peerTunnel, session);
+                    // 如果并行模式下已启动监听，跳过
+                    if (!tcpListeners.containsKey(peerId)) {
+                        startLocalTcpListener(peerTunnel, session);
+                    }
                 }
             }
         }
