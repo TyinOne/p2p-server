@@ -84,6 +84,31 @@ public class ClientConfig {
          * 会话超时（毫秒）
          */
         private long sessionTimeoutMs = 60000;
+
+        /**
+         * 是否启用并行连接（RELAY 立即启动 + TCP/UDP 后台打洞）
+         */
+        private boolean parallelConnectEnabled = true;
+
+        /**
+         * 直连重试间隔（毫秒）
+         */
+        private long directConnectRetryIntervalMs = 30000;
+
+        /**
+         * 直连成功后是否自动切换
+         */
+        private boolean autoSwitchToDirect = true;
+
+        /**
+         * RELAY 是否保持备份
+         */
+        private boolean keepRelayAsBackup = true;
+
+        /**
+         * 活跃连接时是否切换到直连（保守策略）
+         */
+        private boolean switchDuringActiveConnection = false;
     }
 
     @Data
