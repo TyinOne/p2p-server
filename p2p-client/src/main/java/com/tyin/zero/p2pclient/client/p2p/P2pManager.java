@@ -148,6 +148,18 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
                 if (!clientConfig.getP2p().isParallelConnectEnabled()) continue;
                 if (session.getPeerAddress() == null) continue;
 
+                // 如果已有成功的直连，跳过
+                Channel existingTcp = tcpPeerChannels.get(peerId);
+                if (existingTcp != null && existingTcp.isActive()) {
+                    log.debug("Background retry skipped for {}: direct TCP already exists", peerId);
+                    continue;
+                }
+                if (session.getMode() != ConnectionMode.RELAY
+                        && session.getState() == P2pSession.State.ESTABLISHED) {
+                    log.debug("Background retry skipped for {}: already in direct mode", peerId);
+                    continue;
+                }
+
                 log.debug("Background retry: checking direct connect for {}", peerId);
 
                 // 发起 TCP 连接重试
