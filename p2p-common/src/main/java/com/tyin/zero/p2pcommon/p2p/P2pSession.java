@@ -22,6 +22,7 @@ public class P2pSession {
 
     private final String peerId;
     private volatile State state = State.DISCOVERING;
+    private volatile ConnectionMode mode = ConnectionMode.RELAY;
     private volatile InetSocketAddress peerAddress;
     private volatile long lastSeen = System.currentTimeMillis();
 
@@ -41,5 +42,13 @@ public class P2pSession {
 
     public boolean isExpired(long timeoutMs) {
         return System.currentTimeMillis() - lastSeen > timeoutMs;
+    }
+
+    public ConnectionMode getMode() {
+        return mode;
+    }
+
+    public void setMode(ConnectionMode mode) {
+        this.mode = mode;
     }
 }
