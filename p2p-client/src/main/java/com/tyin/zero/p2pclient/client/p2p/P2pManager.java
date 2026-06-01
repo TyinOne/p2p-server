@@ -126,6 +126,65 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         long heartbeatMs = clientConfig.getP2p().getHeartbeatIntervalMs();
         heartbeatScheduler.scheduleWithFixedDelay(this::sendHeartbeats,
                 heartbeatMs, heartbeatMs, TimeUnit.MILLISECONDS);
+
+        // 后台直连重试调度
+        scheduleDirectConnectRetry();
+    }
+
+    /**
+     * 启动后台直连重试调度
+     * 当并行模式下直连失败时，定期重试打洞
+     */
+    private void scheduleDirectConnectRetry() {
+        long retryIntervalMs = clientConfig.getP2p().getDirectConnectRetryIntervalMs();
+
+        heartbeatScheduler.scheduleWithFixedDelay(() -> {
+            for (Map.Entry<String, P2pSession> entry : sessions.entrySet()) {
+                String peerId = entry.getKey();
+                P2pSession session = entry.getValue();
+
+                // 只对 RELAY 模式且启用了并行连接的 peer 重试
+                if (!relayPeers.contains(peerId)) continue;
+                if (!clientConfig.getP2p().isParallelConnectEnabled()) continue;
+                if (session.getPeerAddress() == null) continue;
+
+                log.debug("Background retry: checking direct connect for {}", peerId);
+
+                // 发起 TCP 连接重试
+                String host = session.getPeerAddress().getHostString();
+                int port = session.getPeerAddress().getPort();
+
+                tcpPendingPeers.put(host + ":" + port, peerId);
+                for (int i = 0; i < 3; i++) {
+                    connectTcpPunch(peerId, host, port, () -> onTcpPunchSuccess(peerId));
+                }
+
+                // 同时尝试 UDP 打洞
+                holePuncher.startPunching(
+                        session.getPeerAddress(),
+                        clientConfig.getP2p().getHolePunchIntervalMs(),
+                        clientConfig.getP2p().getHolePunchTimeoutMs(),
+                        () -> {
+                            session.setState(P2pSession.State.ESTABLISHED);
+                            session.updateSeen();
+                            session.setMode(ConnectionMode.UDP_DIRECT);
+
+                            // 自动切换
+                            if (clientConfig.getP2p().isAutoSwitchToDirect()) {
+                                P2pTcpListener listener = tcpListeners.get(peerId);
+                                boolean hasActive = listener != null && listener.hasActiveConnection();
+                                if (!hasActive || clientConfig.getP2p().isSwitchDuringActiveConnection()) {
+                                    log.info("Background retry succeeded: switching from RELAY to UDP_DIRECT for {}", peerId);
+                                    relayPeers.remove(peerId);
+                                }
+                            }
+                            sendP2pSuccess(peerId);
+                            onP2pEstablished(peerId, session);
+                        },
+                        () -> log.debug("Background UDP retry failed for {}", peerId)
+                );
+            }
+        }, retryIntervalMs, retryIntervalMs, TimeUnit.MILLISECONDS);
     }
 
     /**
