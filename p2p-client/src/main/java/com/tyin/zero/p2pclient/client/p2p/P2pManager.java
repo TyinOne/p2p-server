@@ -644,6 +644,13 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
      * P2P 通道建立后的回调
      */
     private void onP2pEstablished(String peerId, P2pSession session) {
+        String mode = relayPeers.contains(peerId) ? "RELAY" : "P2P_DIRECT";
+        log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        log.info("P2P connection established with {}", peerId);
+        log.info("Connection mode: {}", mode);
+        log.info("Peer address: {}", session.getPeerAddress());
+        log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
         // 找到对应的 connect 配置，启动本地 TCP 监听
         if (clientConfig.getConnect() != null) {
             for (ClientConfig.PeerTunnel peerTunnel : clientConfig.getConnect()) {
@@ -678,6 +685,8 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
     private void sendP2pSuccess(String peerId) {
         if (serverCtx == null) return;
 
+        log.info("P2P success notification sent to server for peer: {}", peerId);
+
         TunnelMessage msg = new TunnelMessage();
         msg.setType(TunnelMessage.MessageType.P2P_SUCCESS);
         msg.setClientId(clientConfig.getClientId());
@@ -691,12 +700,10 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
     private void sendP2pFailed(String peerId) {
         if (serverCtx == null) return;
 
-        log.error(">>> sendP2pFailed: myId={}, peerId={}, sessions={}, sessionStates={}",
-                clientConfig.getClientId(), peerId, sessions.keySet(),
-                sessions.entrySet().stream()
-                        .collect(java.util.stream.Collectors.toMap(
-                                java.util.Map.Entry::getKey,
-                                e -> e.getValue().getState().name())));
+        log.warn("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        log.warn("P2P connection failed for peer: {}", peerId);
+        log.warn("Falling back to RELAY mode via server");
+        log.warn("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
         TunnelMessage msg = new TunnelMessage();
         msg.setType(TunnelMessage.MessageType.P2P_FAILED);
@@ -779,8 +786,25 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         }
         session.setState(P2pSession.State.ESTABLISHED);
 
+        log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        log.info("RELAY connection ready with {}", peerId);
+        log.info("All traffic will be forwarded via server");
+        log.info("Please test connection to localhost:{}", getLocalBindPort(peerId));
+        log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
         // 启动本地 TCP 监听
         onP2pEstablished(peerId, session);
+    }
+
+    private int getLocalBindPort(String peerId) {
+        if (clientConfig.getConnect() != null) {
+            for (ClientConfig.PeerTunnel peerTunnel : clientConfig.getConnect()) {
+                if (peerId.equals(peerTunnel.getPeerId())) {
+                    return peerTunnel.getLocalBindPort();
+                }
+            }
+        }
+        return 0;
     }
 
     /**
