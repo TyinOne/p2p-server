@@ -283,6 +283,24 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
             int port = Integer.parseInt(parts[1]);
             session.setPeerAddress(new InetSocketAddress(host, port));
         }
+
+        // 并行模式：收到 candidate 后立即启用 RELAY
+        if (clientConfig.getP2p().isParallelConnectEnabled()
+                && session.getMode() == ConnectionMode.RELAY
+                && !relayPeers.contains(peerId)) {
+            log.info("Parallel connect: enabling RELAY for {} upon receiving candidate", peerId);
+            relayPeers.add(peerId);
+
+            // 启动本地 TCP 监听
+            if (clientConfig.getConnect() != null) {
+                for (ClientConfig.PeerTunnel peerTunnel : clientConfig.getConnect()) {
+                    if (peerId.equals(peerTunnel.getPeerId())) {
+                        startLocalTcpListener(peerTunnel, session);
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     /**
