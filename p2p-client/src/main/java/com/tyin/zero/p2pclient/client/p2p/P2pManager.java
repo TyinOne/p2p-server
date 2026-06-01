@@ -683,6 +683,15 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
             if (peerId != null) {
                 tcpPeerChannels.remove(peerId, ctx.channel());
                 log.info("TCP punch channel inactive for peer {}", peerId);
+
+                // 直连断开后回切到 RELAY（如果 keepRelayAsBackup 启用）
+                P2pSession session = sessions.get(peerId);
+                if (session != null && session.getMode() != ConnectionMode.RELAY
+                        && clientConfig.getP2p().isKeepRelayAsBackup()
+                        && relayPeers.contains(peerId)) {
+                    log.info("Direct connection lost for {}, switching back to RELAY", peerId);
+                    session.setMode(ConnectionMode.RELAY);
+                }
             }
         }
 
@@ -765,6 +774,15 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
             if (peerId != null) {
                 tcpPeerChannels.remove(peerId, ctx.channel());
                 log.info("TCP punch server channel inactive for peer {}", peerId);
+
+                // 直连断开后回切到 RELAY（如果 keepRelayAsBackup 启用）
+                P2pSession session = sessions.get(peerId);
+                if (session != null && session.getMode() != ConnectionMode.RELAY
+                        && clientConfig.getP2p().isKeepRelayAsBackup()
+                        && relayPeers.contains(peerId)) {
+                    log.info("Direct connection lost for {}, switching back to RELAY", peerId);
+                    session.setMode(ConnectionMode.RELAY);
+                }
             }
         }
 
