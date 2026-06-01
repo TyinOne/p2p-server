@@ -9,6 +9,9 @@ import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * P2P 本地 TCP 监听器
  * 在本地端口监听 TCP 连接，将数据桥接到 P2P UDP 通道
@@ -25,6 +28,7 @@ public class P2pTcpListener {
     private EventLoopGroup bossGroup;
     private EventLoopGroup workerGroup;
     private Channel serverChannel;
+    private final Set<Channel> activeChannels = ConcurrentHashMap.newKeySet();
 
     public P2pTcpListener(ClientConfig.PeerTunnel peerTunnel, P2pManager p2pManager,
                            P2pSessionHolder sessionHolder) {
@@ -67,6 +71,10 @@ public class P2pTcpListener {
                             }
                         });
 
+                        // 跟踪活跃连接
+                        activeChannels.add(ch);
+                        ch.closeFuture().addListener(() -> activeChannels.remove(ch));
+
                         log.info("New TCP connection for P2P tunnel session {} → peer {}",
                                 sessionId, peerId);
                     }
@@ -102,8 +110,11 @@ public class P2pTcpListener {
      * 检查是否有活跃的连接
      */
     public boolean hasActiveConnection() {
-        // ServerSocketChannel 不直接追踪子连接，使用 isActive 判断监听状态即可
-        return serverChannel != null && serverChannel.isActive();
+        if (serverChannel == null || !serverChannel.isActive()) {
+            return false;
+        }
+        // 检查是否有子 Channel 活跃
+        return !activeChannels.isEmpty();
     }
 
     /**
