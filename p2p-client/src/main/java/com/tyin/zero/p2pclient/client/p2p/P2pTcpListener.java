@@ -99,6 +99,20 @@ public class P2pTcpListener {
     }
 
     /**
+     * 检查是否有活跃的连接
+     */
+    public boolean hasActiveConnection() {
+        if (serverChannel == null || !serverChannel.isActive()) {
+            return false;
+        }
+        // 检查是否有子 Channel 活跃
+        return serverChannel.pipeline().channels().stream()
+                .filter(ch -> ch instanceof io.netty.channel.socket.SocketChannel && ch.isActive())
+                .findFirst()
+                .isPresent();
+    }
+
+    /**
      * 会话持有者接口（用于检查 P2P 会话是否可用）
      */
     public interface P2pSessionHolder {
