@@ -1,0 +1,30 @@
+# 测试客户端 1 - 暴露 RDP 服务
+p2p:
+  client:
+    auth: "my-secret-key-123"
+    server-host: "1.2.3.4"
+    port: 8084
+    client-id: "client-1"
+
+    p2p:
+      p2pPort: 5001
+      upnpEnabled: false
+      tcpHolePunchTimeoutMs: 8000
+      holePunchTimeoutMs: 10000
+      holePunchIntervalMs: 500
+      heartbeatIntervalMs: 15000
+      sessionTimeoutMs: 60000
+      # 并行连接配置
+      parallelConnectEnabled: true
+      directConnectRetryIntervalMs: 30000
+      autoSwitchToDirect: true
+      keepRelayAsBackup: true
+      switchDuringActiveConnection: false
+
+    tunnels:
+      - remote-port: 3390
+        local-port: 3389
+        local-address: 127.0.0.1
+        description: "本机 RDP"
+
+    connect: []
