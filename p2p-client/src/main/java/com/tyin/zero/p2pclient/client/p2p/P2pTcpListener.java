@@ -73,7 +73,7 @@ public class P2pTcpListener {
 
                         // 跟踪活跃连接
                         activeChannels.add(ch);
-                        ch.closeFuture().addListener(() -> activeChannels.remove(ch));
+                        ch.closeFuture().addListener(cf -> activeChannels.remove(ch));
 
                         log.info("New TCP connection for P2P tunnel session {} → peer {}",
                                 sessionId, peerId);
