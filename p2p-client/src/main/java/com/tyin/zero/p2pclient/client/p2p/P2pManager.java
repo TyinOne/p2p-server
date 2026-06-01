@@ -244,6 +244,13 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         P2pSession session = new P2pSession(peerId);
         sessions.put(peerId, session);
 
+        // 并行模式：直接设置 RELAY 状态并启动本地监听
+        if (clientConfig.getP2p().isParallelConnectEnabled()) {
+            log.info("Parallel connect: marking {} as RELAY mode before P2P_REQUEST response", peerId);
+            session.setMode(ConnectionMode.RELAY);
+            // 注意：本地监听和 relayPeers 在收到 candidate 或 TCP_PUNCH_START 后启动
+        }
+
         TunnelMessage msg = new TunnelMessage();
         msg.setType(TunnelMessage.MessageType.P2P_REQUEST);
         msg.setClientId(clientConfig.getClientId());
