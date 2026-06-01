@@ -304,7 +304,8 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
     }
 
     /**
-     * 处理打洞指令
+     * 处理打洞指令（UDP）
+     * 并行模式：直接启用 RELAY，同时后台 UDP 打洞
      */
     public void handleHolePunch(TunnelMessage msg) {
         String peerId = msg.getPeerId();
@@ -333,6 +334,28 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
 
         session.setState(P2pSession.State.PUNCHING);
 
+        // 检查是否启用并行连接
+        boolean parallelEnabled = clientConfig.getP2p().isParallelConnectEnabled();
+
+        if (parallelEnabled) {
+            // 并行模式：直接启用 RELAY（不通知服务器）
+            log.info("Parallel connect: starting RELAY immediately for {}", peerId);
+
+            session.setMode(ConnectionMode.RELAY);
+            relayPeers.add(peerId);
+
+            // 启动本地 TCP 监听
+            for (ClientConfig.PeerTunnel peerTunnel : clientConfig.getConnect()) {
+                if (peerId.equals(peerTunnel.getPeerId())) {
+                    startLocalTcpListener(peerTunnel, session);
+                    break;
+                }
+            }
+
+            log.info("Parallel connect: RELAY mode active for {}, background UDP punching continues...", peerId);
+        }
+
+        // 开始 UDP 打洞
         holePuncher.startPunching(
                 session.getPeerAddress(),
                 clientConfig.getP2p().getHolePunchIntervalMs(),
@@ -341,10 +364,23 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
                     // 成功
                     session.setState(P2pSession.State.ESTABLISHED);
                     session.updateSeen();
+                    session.setMode(ConnectionMode.UDP_DIRECT);
+
+                    // 自动切换（保守策略）
+                    if (clientConfig.getP2p().isAutoSwitchToDirect() && relayPeers.contains(peerId)) {
+                        P2pTcpListener listener = tcpListeners.get(peerId);
+                        boolean hasActive = listener != null && listener.hasActiveConnection();
+
+                        if (!hasActive || clientConfig.getP2p().isSwitchDuringActiveConnection()) {
+                            log.info("Switching from RELAY to UDP_DIRECT for peer {}", peerId);
+                            relayPeers.remove(peerId);
+                        } else {
+                            log.info("UDP punch succeeded for {} but active connection exists, keeping RELAY", peerId);
+                        }
+                    }
+
                     sendP2pSuccess(peerId);
                     log.info("P2P channel established with {}", peerId);
-
-                    // 启动对端隧道监听
                     onP2pEstablished(peerId, session);
                 },
                 () -> {
@@ -352,7 +388,13 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
                     session.setState(P2pSession.State.FAILED);
                     log.warn("P2P hole punch timeout: myId={}, peerId={}, peerAddr={}",
                             clientConfig.getClientId(), peerId, session.getPeerAddress());
-                    sendP2pFailed(peerId);
+
+                    // 并行模式下已经启动了 RELAY，不需要通知服务器
+                    if (!parallelEnabled) {
+                        sendP2pFailed(peerId);
+                    } else {
+                        log.info("Hole punch failed for {} but RELAY is already active", peerId);
+                    }
                 }
         );
     }
