@@ -1,6 +1,7 @@
 package com.tyin.zero.p2pclient.client.p2p;
 
 import com.tyin.zero.p2pclient.config.ClientConfig;
+import com.tyin.zero.p2pcommon.p2p.ConnectionMode;
 import com.tyin.zero.p2pcommon.p2p.P2pSession;
 import com.tyin.zero.p2pcommon.p2p.P2pUdpCodec;
 import com.tyin.zero.p2pcommon.protocol.TunnelMessage;
@@ -333,7 +334,7 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
 
     /**
      * 处理 TCP 打洞开始指令
-     * 收到后同时向对端的 TCP 端口发起连接，失败后降级 UDP 打洞
+     * 并行模式：立即启用 RELAY + 后台并行 TCP/UDP 打洞
      */
     public void handleTcpPunchStart(TunnelMessage msg) {
         String peerId = msg.getPeerId();
@@ -363,19 +364,49 @@ public class P2pManager implements P2pUdpChannel.P2pDataHandler {
         log.info("TCP punch start: myId={}, peerId={}, peerTcpAddr={}",
                 clientConfig.getClientId(), peerId, peerTcpAddr);
 
-        // 存储预期的对端地址（用于匹配入站连接）
-        tcpPendingPeers.put(host + ":" + port, peerId);
+        // 检查是否启用并行连接
+        boolean parallelEnabled = clientConfig.getP2p().isParallelConnectEnabled();
 
-        // 发起 TCP 连接，失败后降级 UDP
-        for (int i = 0; i < 3; i++) {
-            connectTcpPunch(peerId, host, port, () -> {
-                // TCP 成功回调
-                onTcpPunchSuccess(peerId);
-            });
+        if (parallelEnabled) {
+            // 并行模式：直接设置 RELAY 状态（不通知服务器）
+            log.info("Parallel connect: starting RELAY immediately for {}", peerId);
+
+            // 创建/更新会话
+            P2pSession session = sessions.computeIfAbsent(peerId, P2pSession::new);
+            session.setState(P2pSession.State.ESTABLISHED);
+            session.setMode(ConnectionMode.RELAY);
+
+            // 添加到 RELAY 集合
+            relayPeers.add(peerId);
+
+            // 启动本地 TCP 监听（用户可立即连接）
+            for (ClientConfig.PeerTunnel peerTunnel : clientConfig.getConnect()) {
+                if (peerId.equals(peerTunnel.getPeerId())) {
+                    startLocalTcpListener(peerTunnel, session);
+                    break;
+                }
+            }
+
+            log.info("Parallel connect: RELAY mode active for {}, background TCP punching continues...", peerId);
+
+            // 存储预期的对端地址（用于匹配入站连接）
+            tcpPendingPeers.put(host + ":" + port, peerId);
+
+            // 发起 TCP 连接尝试
+            for (int i = 0; i < 3; i++) {
+                connectTcpPunch(peerId, host, port, () -> onTcpPunchSuccess(peerId));
+            }
+
+            // 等待 TCP 结果，超时后降级 UDP
+            scheduleTcpTimeoutFallback(peerId, host, port);
+        } else {
+            // 非并行模式：保持原有行为
+            tcpPendingPeers.put(host + ":" + port, peerId);
+            for (int i = 0; i < 3; i++) {
+                connectTcpPunch(peerId, host, port, () -> onTcpPunchSuccess(peerId));
+            }
+            scheduleTcpTimeoutFallback(peerId, host, port);
         }
-
-        // 等待 TCP 结果，超时后降级 UDP
-        scheduleTcpTimeoutFallback(peerId, host, port);
     }
 
     /**
